@@ -9,3 +9,9 @@ node_modules/.bin/**
 *.vsix
 **/*.map
 test/**
+PUBLISHING.md
+scripts/**
+.env.example
+
+# stray source image; the packaged icon is media/logo.png
+image.png
