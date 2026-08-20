@@ -13,6 +13,7 @@
     "vscode": "^1.80.0"
   },
   "categories": [
+    "Education",
     "Other"
   ],
   "keywords": [
@@ -289,14 +290,27 @@
     "package:patch": "vsce package patch",
     "build-and-install": "npm run package:patch && powershell -Command \"code --install-extension (Get-ChildItem *.vsix | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name --force\"",
     "vscode:prepublish": "echo \"no build step\"",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "publish:marketplace": "vsce publish",
+    "publish:openvsx": "ovsx publish"
   },
   "dependencies": {
     "ws": "^8.16.0"
   },
   "devDependencies": {
     "@types/vscode": "^1.80.0",
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "@vscode/vsce": "^3.2.0"
   },
-  "icon": "media/logo.png"
+  "icon": "media/logo.png",
+  "pricing": "Free",
+  "galleryBanner": {
+    "color": "#5B5BF0",
+    "theme": "dark"
+  },
+  "bugs": {
+    "url": "https://github.com/voritsack/code_colab_extention/issues"
+  },
+  "qna": "marketplace",
+  "homepage": "https://code-colab.renode.space"
 }
