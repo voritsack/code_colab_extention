@@ -129,25 +129,7 @@ admin dashboard loads - but no session can work until it is fixed.
 | `codecolab.autoOpenPanel` | `true` | Reveal the view when a session starts. |
 | `codecolab.autoUpdate` | `silent` | `silent`, `ask` or `off`. See below. |
 
-### What does not get shared
-
-Sharing a folder does not mean sharing everything in it. A file is left out
-when any of these is true:
-
-| Reason | Detail |
-| --- | --- |
-| Matches `codecolab.exclude` | Generated output (`node_modules`, `dist`, `build`, `target`, `.next`, `.venv`, `__pycache__`, `coverage`, lockfiles, logs) **and credentials** ''' + EM + ''' `.env`, `.ssh/`, `.aws/`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `secrets.*`. `.env.example` is still shared. |
-| Binary | Detected by a null byte in the first 8 KB. Images and compiled output are not text to collaborate on. |
-| Larger than `codecolab.maxFileBytes` | 500 KB by default. |
-| Beyond `codecolab.maxFiles` | 2000 by default; you are warned when this truncates. |
-| Outside the workspace folder | Only the first folder of a multi-root workspace is shared. |
-| Unsafe path | Traversal, absolute paths, drive letters, reserved Windows names, or longer than 400 characters. |
-
-The host is told how many files were skipped, and the log lists them by name
-with the reason.
-
-The exclude list is **not** read from `.gitignore` ''' + EM + ''' it is the setting above,
-so add anything project-specific there yourself.
+Binary files are skipped automatically.
 
 ## Security
 

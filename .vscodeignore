@@ -9,6 +9,3 @@ node_modules/.bin/**
 *.vsix
 **/*.map
 test/**
-
-# stray source image; the packaged icon is media/logo.png
-image.png
