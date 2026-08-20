@@ -59,7 +59,7 @@ Resuming pushes a fresh snapshot so everyone is back in step.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `codecolab.serverUrl` | `http://127.0.0.1:8000` | Backend origin. `CODECOLAB_SERVER_URL` wins over it. |
+| `codecolab.serverUrl` | `http://5.83.153.81:25589` | Backend origin. Set it to `http://127.0.0.1:8000` to work against a local backend. `CODECOLAB_SERVER_URL` wins over it. |
 | `codecolab.wsUrl` | *(empty)* | WebSocket origin; derived from `serverUrl` when empty. `CODECOLAB_WS_URL` wins over it. |
 | `codecolab.exclude` | `node_modules`, `.git`, build output, lockfiles, logs | Never shared or synchronised. |
 | `codecolab.maxFileBytes` | `512000` | Larger files are skipped. |
@@ -89,12 +89,27 @@ Binary files are skipped automatically.
   your open folder's contents to whatever server the link names, so switching
   is never silent.
 
+## Which server it talks to
+
+Out of the box the extension points at the hosted backend
+(`http://5.83.153.81:25589`). Change **Settings → CodeColab → Server Url**, or
+export `CODECOLAB_SERVER_URL`, to run against your own.
+
+An invite link carries the server it belongs to. If it names a different one
+than you have configured, the extension says so and asks before switching:
+joining sends the contents of your open folder to whatever server the link
+names, so that decision is always yours.
+
+> The hosted backend is plain HTTP, so tokens and the code you share travel
+> unencrypted. Put TLS in front of it before using it for anything you would
+> not post publicly.
+
 ## Install
 
 ```bash
 npm install
 npm run package          # produces codecolab-<version>.vsix
-code --install-extension codecolab-1.0.0.vsix
+code --install-extension codecolab-1.1.0.vsix
 ```
 
 If the old `blogapp-sync` extension is still installed, uninstall it — this is

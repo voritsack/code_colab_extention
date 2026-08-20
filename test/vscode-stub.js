@@ -137,7 +137,7 @@ function openDocument(fsPath, text) {
 // --- configuration --------------------------------------------------------
 
 const DEFAULTS = {
-  serverUrl: "http://127.0.0.1:8000",
+  serverUrl: "http://5.83.153.81:25589",
   wsUrl: "",
   exclude: [
     "**/node_modules/**",
