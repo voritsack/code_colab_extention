@@ -11,6 +11,8 @@ node_modules/.bin/**
 test/**
 PUBLISHING.md
 scripts/**
+release.py
+commands.txt
 .env.example
 
 # stray source image; the packaged icon is media/logo.png
