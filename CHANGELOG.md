@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.6
+
+- **`.env.example` is no longer packaged.** `.vscodeignore` both re-included
+  and excluded it, and the file shipped regardless. It documents the
+  environment variables for contributors; an installed copy has no use for it.
+
 ## 2.6.5
 
 - **The pre-rename copy is removed once the new one is running.** Changing the
@@ -20,9 +26,8 @@
 - **Every packaged file resolves to a content type again.** A `.vsix` is an
   OPC package and `vsce` maps parts to content types by file extension alone,
   so `node_modules/ws/LICENSE` - which has no extension - shipped as a part
-  nothing covered, and the Marketplace ingester rejected the upload with
-  "Value cannot be null. Parameter name: v1". That file is no longer packaged
-  and ws's MIT text now travels in `THIRD-PARTY-NOTICES.txt`.
+  nothing covered. That file is no longer packaged and ws's MIT text now
+  travels in `THIRD-PARTY-NOTICES.txt`.
 
 ## 2.6.2
 

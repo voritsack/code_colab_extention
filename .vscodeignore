@@ -5,7 +5,6 @@ node_modules/.bin/**
 .gitignore
 .env
 .env.*
-!.env.example
 *.vsix
 **/*.map
 test/**
@@ -15,13 +14,14 @@ media/publisher-logo-128.png
 scripts/**
 release.py
 commands.txt
+# documents the env vars for contributors; not needed by an installed copy
 .env.example
 
 # stray source image; the packaged icon is media/logo.png
 image.png
 
-# Every part of a .vsix needs a content type, which vsce derives from the file
-# extension; an extensionless file makes the Marketplace ingester fail with
-# "Value cannot be null. Parameter name: v1". ws's license text is preserved
-# in THIRD-PARTY-NOTICES.txt instead, which keeps the MIT notice requirement.
+# A .vsix is an OPC package: every part must resolve to a content type, and
+# vsce builds that map from file extensions alone, so an extensionless file
+# ships as a part nothing covers. ws's license text travels in
+# THIRD-PARTY-NOTICES.txt instead, which keeps the MIT notice requirement.
 node_modules/ws/LICENSE
