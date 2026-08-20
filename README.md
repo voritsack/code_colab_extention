@@ -182,6 +182,9 @@ download has to match the checksum the manifest advertised.
 
 Set `codecolab.autoUpdate` to `ask` or `off` to change that.
 
+See [PUBLISHING.md](PUBLISHING.md) for getting this onto the Visual Studio
+Marketplace and Open VSX.
+
 ## Install
 
 ```bash
