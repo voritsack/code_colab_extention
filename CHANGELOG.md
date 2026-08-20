@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.6.5
+
+- **The pre-rename copy is removed once the new one is running.** Changing the
+  publisher changed the extension id, so 2.6.4 installed *beside* the old
+  `voritsack.codecolab` rather than over it, leaving two copies activating
+  together - two update pollers, two panels, two sets of commands answering to
+  the same names. The new build now uninstalls the old id on activation. It
+  has to happen from the new copy: an extension asked to remove itself is torn
+  down half way through the request.
+
 ## 2.6.4
 
 - **The extension id is now `codecolab.codecolab`.** The publisher changed

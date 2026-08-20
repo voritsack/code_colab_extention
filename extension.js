@@ -24,7 +24,7 @@ const { SessionController } = require("./src/session");
 const { SessionPanel } = require("./src/panel");
 const { PresenceView } = require("./src/presence");
 const { StatusBar } = require("./src/status");
-const { Updater } = require("./src/updater");
+const { Updater, removeLegacyInstall } = require("./src/updater");
 const { normalizeCode } = require("./src/code");
 
 const SESSION_KEY = "codecolab.session";
@@ -115,6 +115,13 @@ function activate(context) {
   );
   updater.check().catch((err) => log.info("Update check skipped: " + (err && err.message)));
   context.subscriptions.push(updater.poll());
+
+  // The publisher rename means an updated machine can be left with the old
+  // extension installed alongside this one. This is where that gets cleaned
+  // up: the old copy cannot remove itself, so the new one does it.
+  removeLegacyInstall(context).catch((err) =>
+    log.warn("Could not tidy up the old extension: " + (err && err.message))
+  );
 }
 
 /**

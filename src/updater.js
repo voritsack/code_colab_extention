@@ -37,6 +37,15 @@ const log = require("./log");
 const { request, download } = require("./http");
 
 const LAST_CHECK_KEY = "codecolab.lastUpdateCheck";
+/**
+ * The publisher changed from `voritsack` to `codecolab` for the Marketplace
+ * release, and an extension is identified by `<publisher>.<name>`, so VS Code
+ * sees the new build as a different extension and installs it beside the old
+ * one rather than over it. Two copies then activate together: two pollers,
+ * two panels, two sets of commands bidding for the same names. The new build
+ * removes the old one.
+ */
+const LEGACY_EXTENSION_ID = "voritsack.codecolab";
 const SKIPPED_KEY = "codecolab.skippedVersion";
 const CHECK_EVERY_MS = 60 * 60 * 1000; // hourly - a build should not sit unseen all day
 const POLL_EVERY_MS = 15 * 60 * 1000; // how often the timer looks; the throttle above decides
@@ -60,6 +69,44 @@ function trustedTransport(url) {
     if (parsed.protocol === "https:") return true;
     return ["localhost", "127.0.0.1", "::1"].indexOf(parsed.hostname) !== -1;
   } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Uninstall the pre-rename copy, if it is still there.
+ *
+ * Safe to call at any time: it does nothing when the old id is not installed,
+ * and it refuses to run when *we* are the old copy - an extension asking for
+ * its own removal would be torn down half way through this function, before
+ * it could install anything or reload the window.
+ *
+ * @param {vscode.ExtensionContext} [context] used to identify the running
+ *   extension; when omitted the self-check falls back to the id lookup.
+ * @returns {Promise<boolean>} whether an old copy was removed
+ */
+async function removeLegacyInstall(context) {
+  const own = context && context.extension && context.extension.id;
+  if (own && own.toLowerCase() === LEGACY_EXTENSION_ID) return false;
+
+  if (!vscode.extensions.getExtension(LEGACY_EXTENSION_ID)) return false;
+
+  try {
+    await vscode.commands.executeCommand(
+      "workbench.extensions.uninstallExtension",
+      LEGACY_EXTENSION_ID
+    );
+    log.info("Removed the superseded " + LEGACY_EXTENSION_ID);
+    return true;
+  } catch (err) {
+    // Not fatal. Two copies running is untidy, not broken, and the person can
+    // remove the old one by hand; failing the update over it would be worse.
+    log.warn(
+      "Could not remove " +
+        LEGACY_EXTENSION_ID +
+        ": " +
+        (err && err.message ? err.message : String(err))
+    );
     return false;
   }
 }
@@ -190,6 +237,12 @@ class Updater {
       );
       log.info("Installed CodeColab " + manifest.version);
 
+      // Usually a no-op: during the rename the code running this *is* the old
+      // copy, so it declines to remove itself and the freshly installed build
+      // does it on its first activation instead. This covers the other order,
+      // where the new build is already the one updating.
+      await removeLegacyInstall(this.context);
+
       // The new code cannot run until the window reloads. A silent update
       // does that itself - that is the point of it - but never while a
       // session is running, because the reload would drop everyone.
@@ -229,4 +282,12 @@ class Updater {
   }
 }
 
-module.exports = { Updater, isNewer, trustedTransport, CHECK_EVERY_MS, POLL_EVERY_MS };
+module.exports = {
+  Updater,
+  isNewer,
+  trustedTransport,
+  removeLegacyInstall,
+  LEGACY_EXTENSION_ID,
+  CHECK_EVERY_MS,
+  POLL_EVERY_MS,
+};

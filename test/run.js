@@ -32,7 +32,13 @@ const { SessionController } = require("../src/session");
 const { SessionPanel } = require("../src/panel");
 const wsFiles = require("../src/workspace");
 const { PresenceView } = require("../src/presence");
-const { Updater, isNewer, trustedTransport } = require("../src/updater");
+const {
+  Updater,
+  isNewer,
+  trustedTransport,
+  removeLegacyInstall,
+  LEGACY_EXTENSION_ID,
+} = require("../src/updater");
 const { colorFor, initials } = require("../src/colors");
 const { normalizeCode } = require("../src/code");
 const paths = require("../src/paths");
@@ -171,6 +177,42 @@ async function unitTests() {
   check(
     "update: plain http on a public host is not",
     !trustedTransport("http://example.com/a")
+  );
+
+  // The publisher rename leaves the old extension installed beside the new
+  // one; the new one is what clears it away.
+  const uninstalled = () =>
+    state.executed.filter((c) => c[0] === "workbench.extensions.uninstallExtension");
+
+  state.executed.length = 0;
+  state.extensions.clear();
+  state.extensions.set(LEGACY_EXTENSION_ID, { id: LEGACY_EXTENSION_ID });
+  const removedOld = await removeLegacyInstall({ extension: { id: "codecolab.codecolab" } });
+  check(
+    "legacy: the new build removes the old id",
+    removedOld === true && uninstalled().some((c) => c[1] === LEGACY_EXTENSION_ID)
+  );
+  check("legacy: and it is gone afterwards", !state.extensions.has(LEGACY_EXTENSION_ID));
+
+  // Asking for its own removal would tear the caller down mid-update.
+  state.executed.length = 0;
+  state.extensions.clear();
+  state.extensions.set(LEGACY_EXTENSION_ID, { id: LEGACY_EXTENSION_ID });
+  const removedSelf = await removeLegacyInstall({ extension: { id: LEGACY_EXTENSION_ID } });
+  check(
+    "legacy: the old build never uninstalls itself",
+    removedSelf === false && uninstalled().length === 0
+  );
+
+  // The common case, on every activation from here on.
+  state.executed.length = 0;
+  state.extensions.clear();
+  const removedNothing = await removeLegacyInstall({
+    extension: { id: "codecolab.codecolab" },
+  });
+  check(
+    "legacy: nothing to do when the old id is absent",
+    removedNothing === false && uninstalled().length === 0
   );
 
   check("colour: stable for an id", colorFor(7).hex === colorFor(7).hex);

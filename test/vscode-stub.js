@@ -23,6 +23,7 @@ const state = {
   documents: new Map(), // fsPath -> { text }
   editors: [], // fake visible editors
   decorations: [], // every setDecorations call, for assertions
+  extensions: new Map(), // id -> extension, for vscode.extensions.getExtension
 };
 
 // --- events ---------------------------------------------------------------
@@ -305,10 +306,19 @@ const vscode = {
     },
   },
 
+  extensions: {
+    getExtension(id) {
+      return state.extensions.get(String(id).toLowerCase());
+    },
+  },
+
   commands: {
     async executeCommand(name, key, value) {
       state.executed.push([name, key]);
       if (name === "setContext") state.contexts[key] = value;
+      if (name === "workbench.extensions.uninstallExtension") {
+        state.extensions.delete(String(key).toLowerCase());
+      }
       return undefined;
     },
     registerCommand(name, handler) {
