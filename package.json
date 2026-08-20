@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
   "description": "Share the folder you already have open. Generate a link, admit people one at a time, and code together — for teaching or for pairing.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,7 +32,7 @@
       "properties": {
         "codecolab.serverUrl": {
           "type": "string",
-          "default": "http://5.83.153.81:25589",
+          "default": "https://code-colab.renode.space",
           "markdownDescription": "Backend origin. Defaults to the hosted CodeColab server; point it at `http://127.0.0.1:8000` to work against a local backend. Overridden by the `CODECOLAB_SERVER_URL` environment variable."
         },
         "codecolab.wsUrl": {

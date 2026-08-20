@@ -11,7 +11,7 @@
 const vscode = require("vscode");
 
 const SECTION = "codecolab";
-const DEFAULT_SERVER_URL = "http://5.83.153.81:25589";
+const DEFAULT_SERVER_URL = "https://code-colab.renode.space";
 
 function conf() {
   return vscode.workspace.getConfiguration(SECTION);

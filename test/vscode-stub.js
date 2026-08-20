@@ -137,7 +137,7 @@ function openDocument(fsPath, text) {
 // --- configuration --------------------------------------------------------
 
 const DEFAULTS = {
-  serverUrl: "http://5.83.153.81:25589",
+  serverUrl: "https://code-colab.renode.space",
   wsUrl: "",
   exclude: [
     "**/node_modules/**",
