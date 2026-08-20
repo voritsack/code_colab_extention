@@ -36,10 +36,19 @@ const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 const oldId = pkg.publisher + "." + pkg.name;
 const newId = publisher + "." + pkg.name;
 
-if (oldId === newId) {
-  console.log("Already set to " + newId + ", nothing to do.");
-  process.exit(0);
-}
+// Deliberately no early exit when package.json already matches: the id also
+// lives in comments, a test fixture and the backend's .env, and those drift
+// out of step on their own - which is exactly when you reach for this.
+//
+// Anchored on the forms the id actually appears in rather than anything
+// ending in ".codecolab", because a loose pattern rewrites prose and file
+// paths that merely mention the name.
+const idPattern = new RegExp(
+  "(vscode://|VSCODE_EXTENSION_ID=|vsce unpublish )([a-z0-9][a-z0-9-]*)\\." +
+    pkg.name,
+  "g"
+);
+const replaceIds = (text) => text.replace(idPattern, "$1" + newId);
 
 /** Files carrying the extension id as text. */
 const textTargets = [
@@ -70,10 +79,12 @@ for (const file of textTargets) {
     continue;
   }
   const before = fs.readFileSync(file, "utf8");
-  if (before.indexOf(oldId) === -1) continue;
-  const after = before.split(oldId).join(newId);
+  const after = replaceIds(before);
+  if (after === before) continue;
   fs.writeFileSync(file, after);
-  const count = before.split(oldId).length - 1;
+  const count = (before.match(idPattern) || []).filter(
+    (m) => m.indexOf(newId) === -1
+  ).length;
   console.log(
     path.relative(path.resolve(EXT_ROOT, ".."), file).padEnd(28) +
       count +

@@ -78,6 +78,11 @@ class SessionPanel {
     this.render();
   }
 
+  /** Answer the view's file search. */
+  postCandidates(items) {
+    if (this.view) this.view.webview.postMessage({ type: "candidates", items });
+  }
+
   setFollowing(participantId) {
     this.followingId = participantId;
     this.render();
@@ -133,6 +138,8 @@ class SessionPanel {
       chat: c.chat,
       board: c.board,
       locks: c.locks,
+      attachments: c.attachments,
+      manualIncludes: Array.from(c.manualIncludes || []),
     });
   }
 
@@ -320,6 +327,8 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
   let tab = "people";
   let seenChat = 0;
   let pen = { color: null, width: 3, tool: "pen" };
+  let fileQuery = "";
+  let candidates = null;
   let board = { canvas: null, ctx: null, drawn: 0, stroke: null };
 
   const send = (type, extra) => vscode.postMessage(Object.assign({ type }, extra || {}));
@@ -499,6 +508,7 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
 
     [["people", "People", state.participants.length],
      ["chat", "Chat", tab === "chat" ? 0 : unread],
+     ["files", "Files", (state.attachments || []).length],
      ["board", "Board", 0]].forEach(([key, label, count]) => {
       const b = el("button", "tab" + (tab === key ? " on" : ""), label);
       if (count) b.appendChild(el("span", "badge", count));
@@ -609,6 +619,112 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
     composer.appendChild(button("Send", null, submit));
     root.appendChild(composer);
     seenChat = state.chat.length;
+  }
+
+  // ---- files --------------------------------------------------------------
+
+  function bytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  function renderFiles() {
+    // Anything at all, passed round the session and deleted with it.
+    root.appendChild(el("h2", null, "Send a file"));
+    root.appendChild(el("p", "muted small",
+      "Images, zips, PDFs \u2014 anything that should not be merged into the " +
+      "project. Deleted when the session ends."));
+
+    const actions = el("div", "row");
+    actions.appendChild(button("Attach files\u2026", null, () => send("attach")));
+    if ((state.attachments || []).length) {
+      actions.appendChild(button("Save all as zip", "secondary", () => send("saveAll")));
+    }
+    root.appendChild(actions);
+
+    if (!(state.attachments || []).length) {
+      root.appendChild(el("p", "muted small", "Nothing attached yet."));
+    } else {
+      const list = el("div", "card");
+      state.attachments.forEach((a) => {
+        const row = el("div", "person");
+        const who = el("div", "who");
+        who.appendChild(el("div", null, a.name));
+        who.appendChild(el("div", "file", bytes(a.size) + " \u00b7 " + a.uploaded_by));
+        const acts = el("div", "acts");
+        acts.appendChild(button("Save", "tiny", () => send("saveAttachment", { id: a.id })));
+        if (state.isHost || a.participant_id === state.myId) {
+          acts.appendChild(button("Remove", "secondary tiny",
+            () => send("detach", { id: a.id })));
+        }
+        who.appendChild(acts);
+        row.appendChild(who);
+        list.appendChild(row);
+      });
+      root.appendChild(list);
+    }
+
+    if (!state.isHost) return;
+
+    // Files the exclude list or the size cap kept back.
+    root.appendChild(el("h2", null, "Share a skipped file"));
+    root.appendChild(el("p", "muted small",
+      "Search the folder. Anything excluded or too big is listed with why; " +
+      "share it and it joins the session."));
+
+    const search = el("div", "composer");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = "fileQuery";
+    input.placeholder = "Filter by name\u2026";
+    input.value = fileQuery;
+    let debounce = null;
+    input.addEventListener("input", () => {
+      fileQuery = input.value;
+      window.clearTimeout(debounce);
+      debounce = window.setTimeout(() => send("searchFiles", { query: fileQuery }), 220);
+    });
+    search.appendChild(input);
+    search.appendChild(button("Search", null, () => send("searchFiles", { query: fileQuery })));
+    root.appendChild(search);
+
+    if (!candidates) {
+      root.appendChild(el("p", "muted small", "Type to search, or press Search."));
+      return;
+    }
+    if (!candidates.length) {
+      root.appendChild(el("p", "muted small", "Nothing matches."));
+      return;
+    }
+
+    const list = el("div", "card");
+    candidates.slice(0, 80).forEach((f) => {
+      const row = el("div", "person");
+      const who = el("div", "who");
+      who.appendChild(el("div", "file", f.path));
+
+      const unlocked = (state.manualIncludes || []).indexOf(f.path) !== -1;
+      who.appendChild(el("div", "file",
+        bytes(f.size) +
+        (f.reason ? " \u00b7 " + f.reason : " \u00b7 already shared") +
+        (unlocked ? " \u00b7 unlocked" : "")));
+
+      if (f.reason) {
+        const acts = el("div", "acts");
+        if (unlocked) {
+          acts.appendChild(button("Stop sharing", "secondary tiny",
+            () => send("unshareFile", { path: f.path })));
+        } else {
+          acts.appendChild(button("Share this one", "tiny",
+            () => send("shareFile", { path: f.path })));
+        }
+        who.appendChild(acts);
+      }
+      row.appendChild(who);
+      list.appendChild(row);
+    });
+    root.appendChild(list);
   }
 
   // ---- board --------------------------------------------------------------
@@ -771,6 +887,7 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
       renderTabs();
       if (tab === "people") renderPeople();
       else if (tab === "chat") renderChat();
+      else if (tab === "files") renderFiles();
       else renderBoard();
     }
 
@@ -791,9 +908,16 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
 
   window.addEventListener("message", (event) => {
     const message = event.data;
+    if (message && message.type === "candidates") {
+      candidates = message.items || [];
+      if (tab === "files") render();
+      return;
+    }
     if (!message || message.type !== "state") return;
 
     const typed = document.getElementById("name");
+    const typedQuery = document.getElementById("fileQuery");
+    if (typedQuery) fileQuery = typedQuery.value;
     const boardGrew =
       state && tab === "board" && (message.board || []).length !== (state.board || []).length;
     const shallow =

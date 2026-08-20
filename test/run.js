@@ -30,6 +30,7 @@ const { Api } = require("../src/api");
 const { Identity } = require("../src/identity");
 const { SessionController } = require("../src/session");
 const { SessionPanel } = require("../src/panel");
+const wsFiles = require("../src/workspace");
 const { PresenceView } = require("../src/presence");
 const { isNewer, trustedTransport } = require("../src/updater");
 const { colorFor, initials } = require("../src/colors");
@@ -151,7 +152,7 @@ async function unitTests() {
   check("code: from url", normalizeCode("https://x.io/j/abc-defg-hij") === "abc-defg-hij");
   check(
     "code: from deep link",
-    normalizeCode("vscode://local.codecolab/join?code=abc-defg-hij&server=http://x") ===
+    normalizeCode("vscode://voritsack.codecolab/join?code=abc-defg-hij&server=http://x") ===
       "abc-defg-hij"
   );
   check("code: rejects junk", normalizeCode("hello") === "");
@@ -199,6 +200,11 @@ async function hostPhase() {
   fs.writeFileSync(path.join(dir, "README.md"), "# host project\n");
   fs.mkdirSync(path.join(dir, "node_modules", "junk"), { recursive: true });
   fs.writeFileSync(path.join(dir, "node_modules", "junk", "index.js"), "// ignore me\n");
+  // Credentials that happen to sit in the shared folder must not go with it.
+  fs.writeFileSync(path.join(dir, ".env"), "DB_PASSWORD=hunter2\n");
+  fs.writeFileSync(path.join(dir, ".env.example"), "DB_PASSWORD=\n");
+  fs.writeFileSync(path.join(dir, "id_rsa"), "-----BEGIN PRIVATE KEY-----\n");
+  fs.writeFileSync(path.join(dir, "server.pem"), "-----BEGIN CERTIFICATE-----\n");
 
   const controller = newController();
 
@@ -269,6 +275,10 @@ async function hostPhase() {
     shared.join(", ")
   );
   check("host: node_modules excluded", !shared.some((p) => p.indexOf("node_modules") !== -1));
+  check("host: .env not shared", !shared.includes(".env"), shared.join(", "));
+  check("host: private key not shared", !shared.includes("id_rsa"));
+  check("host: certificate not shared", !shared.includes("server.pem"));
+  check("host: .env.example still shared", shared.includes(".env.example"), shared.join(", "));
 
   const doc = stub.openDocument(path.join(dir, "src", "app.js"), "console.log(1);\n");
   doc.setText("console.log('typed by host');\n");
@@ -640,6 +650,144 @@ async function extrasPhase() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+/**
+ * Passing files round: attachments for anything at all, and unlocking a
+ * single file the exclude list would otherwise have kept back.
+ */
+async function transferPhase() {
+  console.log("\n- attachments and manual sharing -");
+  const dir = tempWorkspace("codecolab-transfer-");
+  const inbox = tempWorkspace("codecolab-inbox-");
+  state.workspaceRoot = dir;
+
+  fs.writeFileSync(path.join(dir, "main.js"), "console.log('hi');\n");
+  // Excluded by the default globs, but sometimes you do want to send it.
+  fs.writeFileSync(path.join(dir, "debug.log"), "line one\nline two\n");
+  // Binary: belongs in an attachment, not in a text sync.
+  const picture = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(3000, 7),
+  ]);
+  fs.writeFileSync(path.join(dir, "diagram.png"), picture);
+
+  const before = fs.readFileSync(path.join(dir, "diagram.png"));
+
+  const controller = newController();
+  const session = await controller.startHosting({
+    title: "Transfer test",
+    displayName: "Ada Host",
+    allowGuests: true,
+    requireApproval: false,
+  });
+  await waitFor(() => controller.status === "active", { what: "host active" });
+
+  const joined = await request(SERVER + "/api/sessions/join", {
+    method: "POST",
+    body: { code: session.joinCode, display_name: "Bob Guest" },
+  });
+  const guest = new RawPeer("guest");
+  await guest.connect(session.publicId, joined.session_token);
+  await guest.waitFrame("snapshot");
+
+  // ---- what the search offers -------------------------------------------
+  // The host used to receive its own snapshot back and write it out again,
+  // round-tripping every file through UTF-8 and corrupting anything that was
+  // not valid UTF-8 to begin with.
+  check(
+    "snapshot: the host's own files are left alone",
+    fs.readFileSync(path.join(dir, "diagram.png")).equals(before)
+  );
+
+  const all = await wsFiles.listCandidates("");
+  const byPath = Object.fromEntries(all.map((f) => [f.path, f]));
+  check("search: lists the shared file", Boolean(byPath["main.js"]));
+  check("search: lists the excluded one with a reason",
+    byPath["debug.log"] && byPath["debug.log"].reason === "excluded",
+    JSON.stringify(byPath["debug.log"] || null));
+  check("search: shared files carry no reason", byPath["main.js"].reason === null);
+
+  const filtered = await wsFiles.listCandidates("debug");
+  check("search: filters by name",
+    filtered.length === 1 && filtered[0].path === "debug.log",
+    JSON.stringify(filtered.map((f) => f.path)));
+
+  // ---- unlocking one excluded file ---------------------------------------
+  guest.frames.length = 0;
+  await controller.shareFile("debug.log");
+  const pushed = await waitFor(
+    () => guest.frames.find((f) => f.type === "file_update" && f.path === "debug.log"),
+    { what: "the unlocked file to reach the guest" }
+  );
+  check("share: excluded file reaches the guest", pushed.content.indexOf("line one") !== -1);
+  check("share: remembered for the session", controller.manualIncludes.has("debug.log"));
+
+  // and it keeps syncing afterwards, rather than being a one-off
+  guest.frames.length = 0;
+  const doc = stub.openDocument(path.join(dir, "debug.log"), "line one\nline two\n");
+  doc.setText("line one\nedited later\n");
+  emitters.changeText.fire({ document: doc, contentChanges: [{}] });
+  const followUp = await waitFor(
+    () => guest.frames.find((f) => f.type === "file_update" && f.path === "debug.log"),
+    { what: "later edits to the unlocked file" }
+  );
+  check("share: later edits keep flowing", followUp.content.indexOf("edited later") !== -1);
+
+  controller.unshareFile("debug.log");
+  check("share: can be revoked", !controller.manualIncludes.has("debug.log"));
+
+  // ---- a binary file is refused, and told where to go instead -------------
+  let refusal = "";
+  try {
+    await controller.shareFile("diagram.png");
+  } catch (err) {
+    refusal = err.message;
+  }
+  check("share: refuses a binary file", refusal.indexOf("attachment") !== -1, refusal);
+
+  // ---- attachments --------------------------------------------------------
+  const sent = await controller.attachFile(
+    path.join(dir, "diagram.png"),
+    "diagram.png",
+    "image/png"
+  );
+  check("attach: uploaded", sent.size === picture.length, String(sent.size));
+
+  const announced = await guest.waitFrame("attachments");
+  check("attach: everyone is told", announced.attachments.length === 1);
+  check("attach: name preserved", announced.attachments[0].name === "diagram.png");
+
+  await controller.refreshAttachments();
+  check("attach: host sees it too", controller.attachments.length === 1);
+
+  const target = path.join(inbox, "saved.png");
+  await controller.saveAttachment(sent.id, target);
+  check("attach: downloads byte for byte", fs.readFileSync(target).equals(picture));
+
+  const zipPath = path.join(inbox, "bundle.zip");
+  await controller.saveAllAttachments(zipPath);
+  check("attach: zip bundle saved", fs.existsSync(zipPath) && fs.statSync(zipPath).size > 0);
+
+  await controller.detachAttachment(sent.id);
+  await controller.refreshAttachments();
+  check("attach: detached", controller.attachments.length === 0);
+
+  // ---- everything goes when the session does ------------------------------
+  await controller.attachFile(path.join(dir, "diagram.png"), "again.png", "image/png");
+  await controller.refreshAttachments();
+  check("attach: re-added for the teardown check", controller.attachments.length === 1);
+
+  await controller.end();
+  const probe = await request(SERVER + "/api/sessions/join", {
+    method: "POST",
+    body: { code: session.joinCode, display_name: "Too Late" },
+  }).then(() => "joined", (err) => String(err.status));
+  check("attach: session is gone afterwards", probe === "404", probe);
+
+  guest.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(inbox, { recursive: true, force: true });
+}
+
 async function main() {
   console.log("CodeColab extension tests against " + SERVER);
   try {
@@ -653,6 +801,7 @@ async function main() {
   await hostPhase();
   await guestPhase();
   await extrasPhase();
+  await transferPhase();
   await disconnectPhase();
 
   console.log("\n" + checks + " checks, " + failures.length + " failure(s)");

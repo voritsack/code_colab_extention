@@ -168,21 +168,24 @@ function openDocument(fsPath, text) {
 
 // --- configuration --------------------------------------------------------
 
-const DEFAULTS = {
-  serverUrl: "https://code-colab.renode.space",
-  wsUrl: "",
-  exclude: [
-    "**/node_modules/**",
-    "**/.git/**",
-    "**/dist/**",
-    "**/build/**",
-    "**/out/**",
-  ],
-  maxFileBytes: 512000,
-  maxFiles: 2000,
-  syncDelayMs: 20,
-  autoOpenPanel: false,
-};
+/**
+ * The settings VS Code would hand back, taken from the shipped package.json
+ * rather than repeated here. Copying them meant the tests exercised a
+ * configuration nobody actually runs - which is how a change to the real
+ * defaults passes the suite while breaking users.
+ */
+const DEFAULTS = (() => {
+  const contributed =
+    require("../package.json").contributes.configuration.properties;
+  const out = {};
+  for (const [key, schema] of Object.entries(contributed)) {
+    out[key.replace(/^codecolab\./, "")] = schema.default;
+  }
+  // Test-only overrides: no waiting around, no windows popping open.
+  out.syncDelayMs = 20;
+  out.autoOpenPanel = false;
+  return out;
+})();
 
 function getConfiguration(section) {
   return {
@@ -388,6 +391,12 @@ const vscode = {
     },
     registerWebviewViewProvider() {
       return { dispose() {} };
+    },
+    showOpenDialog() {
+      return Promise.resolve(nextAnswer("openDialog"));
+    },
+    showSaveDialog() {
+      return Promise.resolve(nextAnswer("saveDialog"));
     },
   },
 

@@ -72,7 +72,7 @@ function isExcluded(relativePath) {
  * Workspace-relative POSIX path for a document, or null if it is not a file we
  * should be syncing at all.
  */
-function relativePathOf(uri) {
+function relativePathOf(uri, allowed) {
   const folder = rootFolder();
   if (!folder || uri.scheme !== "file") return null;
 
@@ -83,6 +83,9 @@ function relativePathOf(uri) {
   }
   try {
     const safe = sanitizeRelativePath(relative);
+    // `allowed` is the set of files the host unlocked by hand. An excluded
+    // file stays excluded until somebody deliberately says otherwise.
+    if (allowed && allowed.has(safe)) return safe;
     return isExcluded(safe) ? null : safe;
   } catch (err) {
     return null;
@@ -106,12 +109,21 @@ function resolve(relativePath) {
   return vscode.Uri.joinPath(folder.uri, ...safe.split("/"));
 }
 
+/**
+ * Is this file unsafe to move through a text channel?
+ *
+ * A null byte is the classic tell, and what git uses. But the real question
+ * is whether the bytes survive a UTF-8 round trip: anything that does not
+ * comes back with replacement characters where the original bytes were, so
+ * "sharing" it would hand everyone a corrupted copy.
+ */
 function looksBinary(buffer) {
   const limit = Math.min(buffer.length, BINARY_SNIFF_BYTES);
   for (let i = 0; i < limit; i += 1) {
     if (buffer[i] === 0) return true;
   }
-  return false;
+  const head = buffer.subarray(0, limit);
+  return !Buffer.from(head.toString("utf8"), "utf8").equals(head);
 }
 
 /**
@@ -192,9 +204,20 @@ async function writeContent(relativePath, content) {
     return vscode.workspace.applyEdit(edit);
   }
 
+  // Writing identical bytes still bumps the mtime and wakes every watcher
+  // in the editor, so check first.
+  const bytes = Buffer.from(content, "utf8");
+  try {
+    if (Buffer.from(await vscode.workspace.fs.readFile(uri)).equals(bytes)) {
+      return true;
+    }
+  } catch (err) {
+    /* not there yet, which is fine */
+  }
+
   const parent = vscode.Uri.joinPath(uri, "..");
   await vscode.workspace.fs.createDirectory(parent);
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf8"));
+  await vscode.workspace.fs.writeFile(uri, bytes);
   return true;
 }
 
@@ -221,7 +244,70 @@ async function looksEmpty() {
   }
 }
 
+/**
+ * Every file in the workspace with its verdict, for the panel's file search.
+ *
+ * Unlike collectFiles this deliberately looks at excluded files too - the
+ * whole point is to show what is being left out and let the host override it
+ * one file at a time.
+ */
+async function listCandidates(query, { limit = 400 } = {}) {
+  const folder = rootFolder();
+  if (!folder) return [];
+
+  const needle = String(query || "").trim().toLowerCase();
+  const maxBytes = config.maxFileBytes();
+
+  // No exclude pattern here: a hidden file is exactly what we want to list.
+  const uris = await vscode.workspace.findFiles(
+    new vscode.RelativePattern(folder, "**/*"),
+    "**/{.git,node_modules}/**",
+    5000
+  );
+
+  const out = [];
+  for (const uri of uris) {
+    let relative;
+    try {
+      relative = sanitizeRelativePath(
+        vscode.workspace.asRelativePath(uri, false).replace(/\\/g, "/")
+      );
+    } catch (err) {
+      continue;
+    }
+    if (needle && relative.toLowerCase().indexOf(needle) === -1) continue;
+
+    let size = 0;
+    try {
+      size = (await vscode.workspace.fs.stat(uri)).size;
+    } catch (err) {
+      continue;
+    }
+
+    let reason = null;
+    if (isExcluded(relative)) reason = "excluded";
+    else if (size > maxBytes) reason = "too large";
+
+    out.push({ path: relative, size, reason });
+    if (out.length >= limit) break;
+  }
+
+  out.sort((a, b) => a.path.localeCompare(b.path));
+  return out;
+}
+
+/** Read one file for a manual share. Returns null if it is not text. */
+async function readTextFile(relativePath) {
+  const uri = resolve(relativePath);
+  if (!uri) return null;
+  const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
+  if (looksBinary(bytes)) return null;
+  return bytes.toString("utf8");
+}
+
 module.exports = {
+  listCandidates,
+  readTextFile,
   rootFolder,
   rootName,
   relativePathOf,

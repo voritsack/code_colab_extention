@@ -9,7 +9,8 @@
  */
 
 const config = require("./config");
-const { request } = require("./http");
+const { request, download } = require("./http");
+const { upload } = require("./multipart");
 
 function bearer(token) {
   return { Authorization: "Bearer " + token };
@@ -59,6 +60,45 @@ class Api {
     return request(this.base() + "/api/sessions/" + publicId + "/files", {
       headers: bearer(sessionToken),
       timeoutMs: 120000,
+    });
+  }
+
+  // -- attachments: files passed round the session, not part of the project --
+
+  attachmentsUrl(publicId) {
+    return this.base() + "/api/sessions/" + publicId + "/attachments";
+  }
+
+  listAttachments(publicId, sessionToken) {
+    return request(this.attachmentsUrl(publicId), { headers: bearer(sessionToken) });
+  }
+
+  uploadAttachment(publicId, sessionToken, filePath, fileName, contentType) {
+    return upload(this.attachmentsUrl(publicId), filePath, {
+      fileName,
+      contentType,
+      headers: bearer(sessionToken),
+    });
+  }
+
+  downloadAttachment(publicId, sessionToken, attachmentId, destination) {
+    return download(
+      this.attachmentsUrl(publicId) + "/" + attachmentId,
+      destination,
+      { headers: bearer(sessionToken) }
+    );
+  }
+
+  downloadBundle(publicId, sessionToken, destination) {
+    return download(this.attachmentsUrl(publicId) + "/bundle.zip", destination, {
+      headers: bearer(sessionToken),
+    });
+  }
+
+  detachAttachment(publicId, sessionToken, attachmentId) {
+    return request(this.attachmentsUrl(publicId) + "/" + attachmentId, {
+      method: "DELETE",
+      headers: bearer(sessionToken),
     });
   }
 

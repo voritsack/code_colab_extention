@@ -127,7 +127,11 @@ function request(url, options = {}) {
  * Used to fetch extension builds, so the caller can check the digest before
  * doing anything with the file.
  */
-function download(url, destination, { timeoutMs = 120000, maxBytes = 64 * 1024 * 1024 } = {}) {
+function download(
+  url,
+  destination,
+  { timeoutMs = 120000, maxBytes = 64 * 1024 * 1024, headers = {} } = {}
+) {
   const fs = require("fs");
   const crypto = require("crypto");
 
@@ -145,12 +149,13 @@ function download(url, destination, { timeoutMs = 120000, maxBytes = 64 * 1024 *
     }
 
     const client = parsed.protocol === "https:" ? https : http;
-    const req = client.get(url, (res) => {
+    const req = client.get(url, { headers }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         download(new URL(res.headers.location, url).toString(), destination, {
           timeoutMs,
           maxBytes,
+          headers,
         }).then(resolve, reject);
         return;
       }

@@ -15,7 +15,7 @@ function normalizeCode(raw) {
   let value = String(raw || "").trim().toLowerCase();
   if (!value) return "";
 
-  // vscode://local.codecolab/join?code=abc-defg-hij
+  // vscode://voritsack.codecolab/join?code=abc-defg-hij
   const codeParam = value.match(/[?&]code=([^&]+)/);
   if (codeParam) {
     value = decodeURIComponent(codeParam[1]);

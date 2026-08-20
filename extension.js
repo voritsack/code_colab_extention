@@ -11,6 +11,8 @@
  * do comes from the session token you were issued when you started or joined.
  */
 
+const fs = require("fs");
+const path = require("path");
 const vscode = require("vscode");
 
 const config = require("./src/config");
@@ -170,6 +172,13 @@ async function handleIntent(message) {
     resync: () => controller.resync(),
     reconnect: () => reconnect(),
     follow: () => presence.follow(message.id),
+    attach: () => attachFiles(),
+    saveAttachment: () => saveAttachment(message.id),
+    saveAll: () => saveAllAttachments(),
+    detach: () => detachAttachment(message.id),
+    searchFiles: () => searchFiles(message.query),
+    shareFile: () => shareFile(message.path),
+    unshareFile: () => controller.unshareFile(message.path),
     chat: () => controller.sendChat(message.text),
     draw: () => controller.sendStroke(message.stroke),
     boardClear: () => controller.clearBoard(message.scope),
@@ -355,6 +364,180 @@ async function confirmWorkspaceOverwrite(preview) {
   return choice === "Join and overwrite";
 }
 
+// --------------------------------------------------------------------------
+// Attachments and the file search
+// --------------------------------------------------------------------------
+
+function requireSession() {
+  if (!controller.inSession) throw new Error("You are not in a session.");
+  if (controller.status === "pending") {
+    throw new Error("Wait until the host admits you.");
+  }
+  return controller;
+}
+
+async function attachFiles() {
+  requireSession();
+  const picked = await vscode.window.showOpenDialog({
+    canSelectMany: true,
+    openLabel: "Attach",
+    title: "Send these to everyone in the session",
+  });
+  if (!picked || !picked.length) return;
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "CodeColab: sending files",
+      cancellable: false,
+    },
+    async (progress) => {
+      let done = 0;
+      for (const uri of picked) {
+        const name = path.basename(uri.fsPath);
+        progress.report({ message: name });
+        try {
+          await controller.attachFile(uri.fsPath, name, lookupType(name));
+          done += 1;
+        } catch (err) {
+          // One rejected file should not abandon the rest of the batch.
+          const reason = err && err.message ? err.message : String(err);
+          vscode.window.showWarningMessage(
+            "CodeColab: could not send " + name + " - " + reason
+          );
+        }
+      }
+      if (done) {
+        vscode.window.setStatusBarMessage(
+          "$(check) Sent " + done + " file(s)",
+          4000
+        );
+      }
+    }
+  );
+  await controller.refreshAttachments();
+}
+
+/** A content type good enough for the browser saving it later. */
+function lookupType(name) {
+  const ext = path.extname(name).toLowerCase();
+  const known = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".mp4": "video/mp4",
+    ".mp3": "audio/mpeg",
+    ".docx":
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  };
+  return known[ext] || "application/octet-stream";
+}
+
+async function chooseFolder(title) {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: "Save here",
+    title,
+  });
+  return picked && picked.length ? picked[0].fsPath : null;
+}
+
+async function saveAttachment(id) {
+  requireSession();
+  const item = controller.attachments.find((a) => a.id === id);
+  if (!item) throw new Error("That file is no longer attached.");
+
+  const folder = await chooseFolder("Where should " + item.name + " go?");
+  if (!folder) return;
+
+  const target = uniquePath(path.join(folder, item.name));
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "CodeColab: saving " + item.name },
+    () => controller.saveAttachment(id, target)
+  );
+
+  const choice = await vscode.window.showInformationMessage(
+    "Saved " + path.basename(target),
+    "Open folder"
+  );
+  if (choice === "Open folder") {
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(target));
+  }
+}
+
+async function saveAllAttachments() {
+  requireSession();
+  if (!controller.attachments.length) throw new Error("Nothing attached yet.");
+
+  const folder = await chooseFolder("Where should the archive go?");
+  if (!folder) return;
+
+  const name = (controller.session.title || "session").replace(/[^\w .-]+/g, "_");
+  const target = uniquePath(path.join(folder, name + "-files.zip"));
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "CodeColab: building the archive" },
+    () => controller.saveAllAttachments(target)
+  );
+
+  const choice = await vscode.window.showInformationMessage(
+    "Saved " + path.basename(target),
+    "Open folder"
+  );
+  if (choice === "Open folder") {
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(target));
+  }
+}
+
+/** Never silently write over something already sitting there. */
+function uniquePath(candidate) {
+  if (!fs.existsSync(candidate)) return candidate;
+  const dir = path.dirname(candidate);
+  const ext = path.extname(candidate);
+  const stem = path.basename(candidate, ext);
+  for (let i = 2; i < 500; i += 1) {
+    const next = path.join(dir, stem + " (" + i + ")" + ext);
+    if (!fs.existsSync(next)) return next;
+  }
+  return path.join(dir, stem + "-" + Date.now() + ext);
+}
+
+async function detachAttachment(id) {
+  requireSession();
+  const item = controller.attachments.find((a) => a.id === id);
+  const choice = await vscode.window.showWarningMessage(
+    "Remove " + (item ? item.name : "this file") + " from the session?",
+    { modal: true, detail: "Nobody will be able to download it afterwards." },
+    "Remove"
+  );
+  if (choice !== "Remove") return;
+  await controller.detachAttachment(id);
+  await controller.refreshAttachments();
+}
+
+async function searchFiles(query) {
+  const items = await workspace.listCandidates(query);
+  panel.postCandidates(items);
+}
+
+async function shareFile(relativePath) {
+  requireSession();
+  await controller.shareFile(relativePath);
+  vscode.window.setStatusBarMessage("$(check) Sharing " + relativePath, 4000);
+  await searchFiles(undefined);
+}
+
 async function copy(field, label) {
   if (!controller.inSession || !controller.session[field]) {
     throw new Error("Nothing to copy yet.");
@@ -438,7 +621,7 @@ async function changeName() {
 }
 
 // --------------------------------------------------------------------------
-// vscode://local.codecolab/join?code=…&server=…
+// vscode://voritsack.codecolab/join?code=…&server=…
 // --------------------------------------------------------------------------
 
 async function handleUri(uri) {

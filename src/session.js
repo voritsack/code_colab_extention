@@ -63,7 +63,12 @@ class SessionController {
     this.presence = new Map();
     this.chat = [];
     this.board = [];
+    this.attachments = [];
     this.locks = {}; // relative path -> participant id holding it
+    // Files the host unlocked by hand, overriding the exclude list for this
+    // session only. Deliberately not persisted: an override should not
+    // silently apply to the next session on the same folder.
+    this.manualIncludes = new Set();
     this.status = "idle"; // idle | connecting | active | paused | pending | ended
     this.role = null;
     this.participantId = null;
@@ -516,7 +521,18 @@ class SessionController {
     }
 
     switch (message.type) {
-      case "hello":
+      case "hello": {
+        // A greeting can arrive after an approval that beat it out of the
+        // server, in which case it describes a state we have already moved
+        // past. Never let it walk us backwards.
+        const stale =
+          message.you.state === "pending" &&
+          this.status !== "pending" &&
+          this.status !== "connecting";
+        if (stale) {
+          log.info("Ignored a stale hello: already admitted");
+          break;
+        }
         this.role = message.you.role;
         this.participantId = message.you.participant_id;
         this.status = message.you.state === "pending" ? "pending" : message.session.status;
@@ -529,8 +545,14 @@ class SessionController {
         });
         this.changed();
         break;
+      }
 
       case "pending":
+        // Same reasoning as the hello guard above.
+        if (this.status !== "pending" && this.status !== "connecting") {
+          log.info("Ignored a stale pending: already admitted");
+          break;
+        }
         this.status = "pending";
         this.changed();
         vscode.window.setStatusBarMessage(
@@ -660,6 +682,11 @@ class SessionController {
 
       case "file_locks":
         this.locks = message.locks || {};
+        this.changed();
+        break;
+
+      case "attachments":
+        this.attachments = message.attachments || [];
         this.changed();
         break;
 
@@ -858,7 +885,7 @@ class SessionController {
 
   queueEdit(document, immediate = false) {
     if (!this.canEdit) return;
-    const relative = workspace.relativePathOf(document.uri);
+    const relative = workspace.relativePathOf(document.uri, this.manualIncludes);
     if (!relative) return;
 
     const text = document.getText();
@@ -890,7 +917,7 @@ class SessionController {
 
   async sendFileFromDisk(uri) {
     if (!this.canEdit) return;
-    const relative = workspace.relativePathOf(uri);
+    const relative = workspace.relativePathOf(uri, this.manualIncludes);
     if (!relative) return;
     try {
       const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
@@ -1001,6 +1028,86 @@ class SessionController {
     return this.send({ type: "request_edit" });
   }
 
+  // -- sharing one excluded file --------------------------------------------
+
+  /**
+   * Push a file the exclude list or the size limit left out.
+   *
+   * Text only. A binary file has no business in a text sync - it would be
+   * mangled on the way through - so those go via attachments instead.
+   */
+  async shareFile(relativePath) {
+    if (!this.canEdit) {
+      throw new Error("You need editing access to share a file.");
+    }
+    const content = await workspace.readTextFile(relativePath);
+    if (content === null) {
+      throw new Error(
+        relativePath + " is not a text file. Send it as an attachment instead."
+      );
+    }
+    this.manualIncludes.add(relativePath);
+    this.send({ type: "file_update", path: relativePath, content });
+    log.info("Manually shared " + relativePath);
+    this.changed();
+    return true;
+  }
+
+  unshareFile(relativePath) {
+    this.manualIncludes.delete(relativePath);
+    this.changed();
+  }
+
+  // -- attachments -----------------------------------------------------------
+
+  async refreshAttachments() {
+    if (!this.session || !this.sessionToken) return [];
+    this.attachments = await this.api.listAttachments(
+      this.session.publicId,
+      this.sessionToken
+    );
+    this.changed();
+    return this.attachments;
+  }
+
+  async attachFile(filePath, fileName, contentType) {
+    if (!this.session || !this.sessionToken) throw new Error("No session");
+    const result = await this.api.uploadAttachment(
+      this.session.publicId,
+      this.sessionToken,
+      filePath,
+      fileName,
+      contentType
+    );
+    log.info("Attached " + result.name + " (" + result.size + " bytes)");
+    return result;
+  }
+
+  saveAttachment(attachmentId, destination) {
+    return this.api.downloadAttachment(
+      this.session.publicId,
+      this.sessionToken,
+      attachmentId,
+      destination
+    );
+  }
+
+  saveAllAttachments(destination) {
+    return this.api.downloadBundle(
+      this.session.publicId,
+      this.sessionToken,
+      destination
+    );
+  }
+
+  detachAttachment(attachmentId) {
+    return this.api.detachAttachment(
+      this.session.publicId,
+      this.sessionToken,
+      attachmentId
+    );
+  }
+
   /** Who is holding a file, if anyone other than you. */
   lockHolder(relativePath) {
     const holder = this.locks[relativePath];
@@ -1075,7 +1182,9 @@ class SessionController {
     this.presence.clear();
     this.chat = [];
     this.board = [];
+    this.attachments = [];
     this.locks = {};
+    this.manualIncludes.clear();
     this.store.clear();
     this.role = null;
     this.participantId = null;
