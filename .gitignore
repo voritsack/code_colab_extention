@@ -1,0 +1,18 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build output
+*.vsix
+out/
+dist/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode-test/

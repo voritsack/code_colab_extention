@@ -1,0 +1,83 @@
+{
+  "name": "blogapp-sync",
+  "displayName": "BlogApp Code Sync",
+  "publisher": "local",
+  "description": "Live code streaming for BlogApp",
+  "version": "0.0.38",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/blogapp-sync"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:blogapp.startProjectSync",
+    "onCommand:blogapp.startSingleFileSync",
+    "onCommand:blogapp.saveProject",
+    "onCommand:blogapp.logout",
+    "onCommand:blogapp.connectToRoom",
+    "onCommand:blogapp.joinProjectSync"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "BlogApp Code Sync",
+      "properties": {
+        "blogapp.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "markdownDescription": "Backend origin used for HTTP requests. Overridden by the `BLOGAPP_SERVER_URL` environment variable."
+        },
+        "blogapp.wsUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "WebSocket origin. Leave empty to derive it from `#blogapp.serverUrl#` (http -> ws). Overridden by the `BLOGAPP_WS_URL` environment variable."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "blogapp.startProjectSync",
+        "title": "BlogApp: Запустить трансляцию проекта"
+      },
+      {
+        "command": "blogapp.startSingleFileSync",
+        "title": "BlogApp: Запустить трансляцию файла"
+      },
+      {
+        "command": "blogapp.saveProject",
+        "title": "BlogApp: Сохранить проект в базу данных"
+      },
+      {
+        "command": "blogapp.logout",
+        "title": "BlogApp: Выйти из аккаунта"
+      },
+      {
+        "command": "blogapp.connectToRoom",
+        "title": "BlogApp: Подключиться к комнате"
+      },
+      {
+        "command": "blogapp.joinProjectSync",
+        "title": "BlogApp: Подключиться к трансляции проекта"
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package --allow-missing-repository",
+    "package:patch": "vsce package patch --allow-missing-repository",
+    "build-and-install": "npm run package:patch && powershell -Command \"code --install-extension (Get-ChildItem *.vsix | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name --force\"",
+    "lint": "echo \"Skipping lint\"",
+    "vscode:prepublish": "echo \"Skipping prepublish\""
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "eslint": "^10.8.1"
+  }
+}
