@@ -632,7 +632,7 @@ async function changeName() {
 }
 
 // --------------------------------------------------------------------------
-// vscode://voritsack.codecolab/join?code=…&server=…
+// vscode://codecolab.codecolab/join?code=…&server=…
 // --------------------------------------------------------------------------
 
 async function handleUri(uri) {

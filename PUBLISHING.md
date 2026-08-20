@@ -9,8 +9,8 @@ Everything in the code is ready. Three things are left, and they all need you.
 - [ ] `cd VScode-ex`
 - [ ] `npx @vscode/vsce login voritsack` — paste the token
 - [ ] `npm run publish:marketplace`
-- [ ] In the hosting panel, set `VSCODE_EXTENSION_ID=voritsack.codecolab` in `.env` and restart
-- [ ] Check `curl -s https://code-colab.renode.space/api/info` says `voritsack.codecolab`
+- [ ] In the hosting panel, set `VSCODE_EXTENSION_ID=codecolab.codecolab` in `.env` and restart
+- [ ] Check `curl -s https://code-colab.renode.space/api/info` says `codecolab.codecolab`
 
 Optional:
 
@@ -57,14 +57,14 @@ Live in five to ten minutes. Login is once per machine.
 
 **Do this or every invite link breaks.**
 
-The "Open in VS Code" button builds `vscode://voritsack.codecolab/join?...`.
+The "Open in VS Code" button builds `vscode://codecolab.codecolab/join?...`.
 The server on `code-colab.renode.space` still has the old placeholder, and
 `.env` is not in the repository, so pushing does not fix it.
 
 In the hosting panel's file manager, open `.env` and set:
 
 ```
-VSCODE_EXTENSION_ID=voritsack.codecolab
+VSCODE_EXTENSION_ID=codecolab.codecolab
 ```
 
 Restart, then check:
@@ -73,7 +73,7 @@ Restart, then check:
 curl -s https://code-colab.renode.space/api/info
 ```
 
-It must say `"extension_id":"voritsack.codecolab"`. If it still says
+It must say `"extension_id":"codecolab.codecolab"`. If it still says
 `local.codecolab`, the button will do nothing at all — no error, no message,
 it just fails silently. The server also warns about this in its startup log.
 
@@ -168,7 +168,7 @@ shows the two URLs clients talk to.
 ## Unpublishing
 
 ```bash
-npx @vscode/vsce unpublish voritsack.codecolab
+npx @vscode/vsce unpublish codecolab.codecolab
 ```
 
 The listing goes, but the publisher ID and extension name stay burned — you

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.4
+
+- **The extension id is now `codecolab.codecolab`.** The publisher changed
+  from `voritsack` to `codecolab` ahead of the first Marketplace release, and
+  the id is `<publisher>.<name>`, so the `vscode://` deep link behind every
+  "Open in VS Code" button changed with it. The backend builds that link from
+  `VSCODE_EXTENSION_ID`, which has to be updated on the server too.
+- **Every packaged file resolves to a content type again.** A `.vsix` is an
+  OPC package and `vsce` maps parts to content types by file extension alone,
+  so `node_modules/ws/LICENSE` - which has no extension - shipped as a part
+  nothing covered, and the Marketplace ingester rejected the upload with
+  "Value cannot be null. Parameter name: v1". That file is no longer packaged
+  and ws's MIT text now travels in `THIRD-PARTY-NOTICES.txt`.
+
 ## 2.6.2
 
 - **"Share this one" now means the same thing for every file.** Anything the

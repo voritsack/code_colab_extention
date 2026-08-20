@@ -8,33 +8,24 @@ Copy each value into the matching field at
 | Field | Value |
 | --- | --- |
 | **Name** | `CodeColab` |
-| **ID** | `voritsack` |
+| **ID** | `codecolab` |
 | **Verified domain** | *leave empty* |
 
 ### Read this before submitting
 
 The ID is not a display name — it is the namespace every extension is
-published under, it appears in the extension's permanent identifier
-(`voritsack.codecolab`), and **it can never be changed after creation**.
+published under, it forms the extension's permanent identifier
+(`codecolab.codecolab`), and **it can never be changed after creation**.
 
-`package.json` already declares:
+`package.json` declares:
 
 ```json
-"publisher": "voritsack"
+"publisher": "codecolab"
 ```
 
-So the ID has to be `voritsack`, not `CodeColab`. If you create the publisher
-as `CodeColab`, `vsce publish` fails with a mismatch and the only fix is
-editing `package.json`, re-releasing, and abandoning the unused publisher —
-the name is taken permanently either way.
-
-The **Name** field is the free-text display name shown on the profile page, so
-`CodeColab` belongs there and reads exactly the way you wanted.
-
-If you would rather the identifier itself be `codecolab`, say so — that is a
-one-line change to `package.json` plus a release, and it must happen *before*
-the first publish, since the extension's marketplace URL and every existing
-install key are built from `publisher.name`.
+Create the publisher with the ID exactly `codecolab`, lower case. The **Name**
+field is the free-text display name on the profile page, so `CodeColab` goes
+there and reads the way you want.
 
 ## About you
 

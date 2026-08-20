@@ -152,7 +152,7 @@ async function unitTests() {
   check("code: from url", normalizeCode("https://x.io/j/abc-defg-hij") === "abc-defg-hij");
   check(
     "code: from deep link",
-    normalizeCode("vscode://voritsack.codecolab/join?code=abc-defg-hij&server=http://x") ===
+    normalizeCode("vscode://codecolab.codecolab/join?code=abc-defg-hij&server=http://x") ===
       "abc-defg-hij"
   );
   check("code: rejects junk", normalizeCode("hello") === "");
