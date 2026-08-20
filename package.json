@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "voritsack",
   "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "license": "MIT",
   "repository": {
     "type": "git",
