@@ -2,8 +2,8 @@
   "name": "codecolab",
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
-  "description": "Share the folder you already have open. Generate a link, admit people one at a time, and code together — for teaching or for pairing.",
-  "version": "1.4.0",
+  "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
+  "version": "2.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -151,56 +151,22 @@
         "icon": "$(cloud-upload)"
       },
       {
-        "command": "codecolab.approve",
-        "title": "Admit",
-        "category": "CodeColab",
-        "icon": "$(check)"
-      },
-      {
-        "command": "codecolab.deny",
-        "title": "Refuse",
-        "category": "CodeColab",
-        "icon": "$(close)"
-      },
-      {
-        "command": "codecolab.makeEditor",
-        "title": "Allow editing",
-        "category": "CodeColab",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "codecolab.makeViewer",
-        "title": "Make view-only",
-        "category": "CodeColab",
-        "icon": "$(eye)"
-      },
-      {
-        "command": "codecolab.removeParticipant",
-        "title": "Remove from session",
-        "category": "CodeColab",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "codecolab.signIn",
-        "title": "Sign in",
-        "category": "CodeColab",
-        "icon": "$(account)"
-      },
-      {
-        "command": "codecolab.signOut",
-        "title": "Sign out",
-        "category": "CodeColab"
-      },
-      {
-        "command": "codecolab.register",
-        "title": "Create an account",
-        "category": "CodeColab"
-      },
-      {
         "command": "codecolab.showLog",
         "title": "Show log",
         "category": "CodeColab",
         "icon": "$(output)"
+      },
+      {
+        "command": "codecolab.setName",
+        "title": "Change your display name",
+        "category": "CodeColab",
+        "icon": "$(account)"
+      },
+      {
+        "command": "codecolab.showPanel",
+        "title": "Open the CodeColab panel",
+        "category": "CodeColab",
+        "icon": "$(window)"
       }
     ],
     "viewsContainers": {
@@ -217,17 +183,11 @@
         {
           "id": "codecolab.sessionView",
           "name": "Session",
+          "type": "webview",
           "icon": "media/icon.svg"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "codecolab.sessionView",
-        "contents": "Share the folder you have open and code together in real time.\n\n[Start session and generate link](command:codecolab.startSession)\n[Join with a code](command:codecolab.joinSession)\n\nThe host generates a link, you open it, and the host admits you.",
-        "when": "!codecolab.inSession"
-      }
-    ],
     "menus": {
       "view/title": [
         {
@@ -241,94 +201,17 @@
           "group": "navigation@1"
         },
         {
-          "command": "codecolab.pauseSession",
-          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == active && codecolab.status != disconnected",
-          "group": "navigation@2"
-        },
-        {
-          "command": "codecolab.resumeSession",
-          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == paused",
-          "group": "navigation@2"
-        },
-        {
-          "command": "codecolab.resync",
-          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost && codecolab.status != disconnected",
-          "group": "navigation@3"
-        },
-        {
-          "command": "codecolab.pushWorkspace",
-          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status != disconnected",
-          "group": "navigation@3"
-        },
-        {
-          "command": "codecolab.endSession",
-          "when": "view == codecolab.sessionView && codecolab.isHost",
-          "group": "navigation@9"
-        },
-        {
-          "command": "codecolab.leaveSession",
-          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost",
-          "group": "navigation@9"
-        },
-        {
-          "command": "codecolab.showLog",
+          "command": "codecolab.setName",
           "when": "view == codecolab.sessionView",
           "group": "overflow@1"
         },
         {
-          "command": "codecolab.signOut",
+          "command": "codecolab.showLog",
           "when": "view == codecolab.sessionView",
           "group": "overflow@2"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "codecolab.approve",
-          "when": "view == codecolab.sessionView && viewItem == pendingParticipant",
-          "group": "inline@1"
-        },
-        {
-          "command": "codecolab.deny",
-          "when": "view == codecolab.sessionView && viewItem == pendingParticipant",
-          "group": "inline@2"
-        },
-        {
-          "command": "codecolab.makeEditor",
-          "when": "view == codecolab.sessionView && viewItem == viewerParticipant",
-          "group": "inline@1"
-        },
-        {
-          "command": "codecolab.makeViewer",
-          "when": "view == codecolab.sessionView && viewItem == editorParticipant",
-          "group": "inline@1"
-        },
-        {
-          "command": "codecolab.removeParticipant",
-          "when": "view == codecolab.sessionView && viewItem =~ /^(viewer|editor)Participant$/",
-          "group": "manage@1"
-        }
-      ],
       "commandPalette": [
-        {
-          "command": "codecolab.approve",
-          "when": "false"
-        },
-        {
-          "command": "codecolab.deny",
-          "when": "false"
-        },
-        {
-          "command": "codecolab.makeEditor",
-          "when": "false"
-        },
-        {
-          "command": "codecolab.makeViewer",
-          "when": "false"
-        },
-        {
-          "command": "codecolab.removeParticipant",
-          "when": "false"
-        },
         {
           "command": "codecolab.pauseSession",
           "when": "codecolab.isHost"

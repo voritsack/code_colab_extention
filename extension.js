@@ -1,12 +1,14 @@
 "use strict";
 
 /**
- * CodeColab — live collaborative coding for VS Code.
+ * CodeColab - live collaborative coding for VS Code.
  *
  * The host shares the folder they already have open and gets a link plus a
  * short code. Anyone opening the link is handed to VS Code, asks to join, and
- * waits until the host admits them. The host can pause, resume and end the
- * session, and change anyone's role while it runs.
+ * waits until the host admits them.
+ *
+ * There are no accounts. You pick a display name, and what you are allowed to
+ * do comes from the session token you were issued when you started or joined.
  */
 
 const vscode = require("vscode");
@@ -14,28 +16,26 @@ const vscode = require("vscode");
 const config = require("./src/config");
 const log = require("./src/log");
 const workspace = require("./src/workspace");
-const { Auth } = require("./src/auth");
 const { Api } = require("./src/api");
+const { Identity } = require("./src/identity");
 const { SessionController } = require("./src/session");
-const { SessionTreeProvider } = require("./src/tree");
+const { SessionPanel } = require("./src/panel");
 const { StatusBar } = require("./src/status");
 const { normalizeCode } = require("./src/code");
 
 let controller = null;
-let auth = null;
+let identity = null;
+let panel = null;
 let api = null;
 
 function activate(context) {
   log.info("CodeColab activated");
 
-  auth = new Auth(context);
-  api = new Api(auth);
-  controller = new SessionController(api, auth);
+  api = new Api();
+  identity = new Identity(context);
+  controller = new SessionController(api);
+  panel = new SessionPanel(controller, identity, handleIntent);
 
-  const tree = new SessionTreeProvider(controller);
-  const view = vscode.window.createTreeView("codecolab.sessionView", {
-    treeDataProvider: tree,
-  });
   const status = new StatusBar(controller);
 
   vscode.commands.executeCommand("setContext", "codecolab.inSession", false);
@@ -43,57 +43,87 @@ function activate(context) {
 
   const register = (name, handler) =>
     context.subscriptions.push(
-      vscode.commands.registerCommand(name, (...args) =>
-        Promise.resolve()
-          .then(() => handler(...args))
-          .catch((err) => {
-            log.error(name + ": " + (err && err.stack ? err.stack : err));
-            vscode.window.showErrorMessage(
-              "CodeColab: " + (err && err.message ? err.message : String(err))
-            );
-          })
-      )
+      vscode.commands.registerCommand(name, (...args) => run(name, handler, args))
     );
 
   register("codecolab.startSession", () => startSession());
   register("codecolab.joinSession", (prefill) => joinSession(prefill));
-  register("codecolab.copyInvite", () => copyInvite());
-  register("codecolab.copyCode", () => copyCode());
+  register("codecolab.copyInvite", () => copy("joinUrl", "Invite link"));
+  register("codecolab.copyCode", () => copy("joinCode", "Join code"));
   register("codecolab.pauseSession", () => requireHost().pause());
   register("codecolab.resumeSession", () => requireHost().resume());
   register("codecolab.endSession", () => endSession());
   register("codecolab.leaveSession", () => leaveSession());
   register("codecolab.reconnect", () => reconnect());
   register("codecolab.resync", () => controller.resync());
-  register("codecolab.pushWorkspace", () => controller.pushWorkspace());
-  register("codecolab.approve", (node) => admit(node, "editor"));
-  register("codecolab.deny", (node) => withParticipant(node, (id) => controller.deny(id)));
-  register("codecolab.makeEditor", (node) =>
-    withParticipant(node, (id) => controller.setRole(id, "editor"))
-  );
-  register("codecolab.makeViewer", (node) =>
-    withParticipant(node, (id) => controller.setRole(id, "viewer"))
-  );
-  register("codecolab.removeParticipant", (node) => removeParticipant(node));
-  register("codecolab.signIn", () => auth.signIn());
-  register("codecolab.signOut", () => auth.signOut());
-  register("codecolab.register", () => auth.register());
+  register("codecolab.pushWorkspace", () => pushWorkspace());
+  register("codecolab.setName", () => changeName());
   register("codecolab.showLog", () => log.show());
-  register("codecolab.showPanelOrStart", () => {
-    if (controller.isDisconnected) return reconnect();
-    if (controller.inSession) {
-      return vscode.commands.executeCommand("codecolab.sessionView.focus");
-    }
-    return startSession();
-  });
+  register("codecolab.showPanel", () => panel.reveal());
 
   context.subscriptions.push(
-    vscode.window.registerUriHandler({ handleUri: (uri) => handleUri(uri) })
+    vscode.window.registerWebviewViewProvider("codecolab.sessionView", panel, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.window.registerUriHandler({ handleUri: (uri) => handleUri(uri) }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => panel.render()),
+    status,
+    controller,
+    { dispose: () => log.dispose() }
   );
+}
 
-  context.subscriptions.push(view, status, controller, {
-    dispose: () => log.dispose(),
-  });
+function run(name, handler, args) {
+  return Promise.resolve()
+    .then(() => handler(...args))
+    .catch((err) => {
+      log.error(name + ": " + (err && err.stack ? err.stack : err));
+      vscode.window.showErrorMessage(
+        "CodeColab: " + (err && err.message ? err.message : String(err))
+      );
+    });
+}
+
+// --------------------------------------------------------------------------
+// Panel intents
+// --------------------------------------------------------------------------
+
+async function handleIntent(message) {
+  const host = () => requireHost();
+
+  const actions = {
+    openFolder: () => vscode.commands.executeCommand("vscode.openFolder"),
+    start: () =>
+      startSession({
+        displayName: message.displayName,
+        title: message.title,
+        requireApproval: message.requireApproval,
+        allowGuests: message.allowGuests,
+      }),
+    join: () => joinSession(message.code, { displayName: message.displayName }),
+    copyCode: () => copy("joinCode", "Join code"),
+    copyLink: () => copy("joinUrl", "Invite link"),
+    openPage: () => openInvitePage(),
+    pause: () => host().pause(),
+    resume: () => host().resume(),
+    end: () => endSession(),
+    leave: () => leaveSession(),
+    push: () => pushWorkspace(),
+    resync: () => controller.resync(),
+    reconnect: () => reconnect(),
+    approve: () => host().approve(message.id, message.role),
+    deny: () => host().deny(message.id),
+    role: () => host().setRole(message.id, message.role),
+    remove: () => removeParticipant(message.id),
+    showLog: () => log.show(),
+  };
+
+  const action = actions[message.type];
+  if (!action) {
+    log.warn("Unknown panel intent: " + message.type);
+    return;
+  }
+  await run("panel:" + message.type, action, []);
 }
 
 // --------------------------------------------------------------------------
@@ -106,16 +136,14 @@ function requireHost() {
   return controller;
 }
 
-async function startSession() {
+async function startSession(options = {}) {
   if (controller.inSession) {
     const choice = await vscode.window.showWarningMessage(
       "A session is already running.",
       "Show it",
       "End it and start a new one"
     );
-    if (choice === "Show it") {
-      return vscode.commands.executeCommand("codecolab.sessionView.focus");
-    }
+    if (choice === "Show it") return panel.reveal();
     if (choice !== "End it and start a new one") return undefined;
     await controller.end();
   }
@@ -123,97 +151,58 @@ async function startSession() {
   const folder = workspace.rootFolder();
   if (!folder) {
     const choice = await vscode.window.showErrorMessage(
-      "Open a folder before starting a session — that folder is what you share.",
+      "Open a folder before starting a session - that folder is what you share.",
       "Open folder…"
     );
     if (choice) vscode.commands.executeCommand("vscode.openFolder");
     return undefined;
   }
 
-  if (!(await auth.isSignedIn())) {
-    const record = await auth.signIn();
-    if (!record) return undefined;
+  const displayName = options.displayName
+    ? await identity.set(options.displayName)
+    : await identity.require("What name should other people see?");
+  if (!displayName) return undefined;
+
+  let title = options.title;
+  if (!title) {
+    title = await vscode.window.showInputBox({
+      title: "Start a CodeColab session",
+      prompt: "What is this session called?",
+      value: folder.name,
+      ignoreFocusOut: true,
+      validateInput: (value) => (value && value.trim() ? null : "Required"),
+    });
+    if (!title) return undefined;
   }
 
-  const title = await vscode.window.showInputBox({
-    title: "Start a CodeColab session",
-    prompt: "What is this session called?",
-    value: folder.name,
-    ignoreFocusOut: true,
-    validateInput: (value) => (value && value.trim() ? null : "Required"),
-  });
-  if (!title) return undefined;
-
-  const audience = await vscode.window.showQuickPick(
-    [
-      {
-        label: "$(globe) Anyone with the link",
-        detail: "Guests enter a display name. You still admit each one.",
-        guests: true,
-      },
-      {
-        label: "$(shield) Signed-in accounts only",
-        detail: "Everyone must have an account on this server.",
-        guests: false,
-      },
-    ],
-    { title: "Who can join?", ignoreFocusOut: true }
-  );
-  if (!audience) return undefined;
-
-  const admission = await vscode.window.showQuickPick(
-    [
-      {
-        label: "$(person-add) I admit each person",
-        detail: "You get a prompt when somebody asks to join.",
-        approve: true,
-      },
-      {
-        label: "$(unlock) Anyone with the code walks in",
-        detail: "No prompt. Use this only for a code you keep private.",
-        approve: false,
-      },
-    ],
-    { title: "Admission", ignoreFocusOut: true }
-  );
-  if (!admission) return undefined;
-
-  const session = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: "CodeColab: starting session" },
-    () =>
-      controller.startHosting({
-        title: title.trim(),
-        allowGuests: audience.guests,
-        requireApproval: admission.approve,
-      })
-  );
+  panel.reveal();
+  panel.setBusy("Starting session");
+  let session;
+  try {
+    session = await controller.startHosting({
+      title: title.trim(),
+      displayName,
+      allowGuests: options.allowGuests !== false,
+      requireApproval: options.requireApproval !== false,
+    });
+  } finally {
+    panel.setBusy(null);
+  }
 
   await vscode.env.clipboard.writeText(session.joinUrl);
-  if (config.autoOpenPanel()) {
-    vscode.commands.executeCommand("codecolab.sessionView.focus");
-  }
-
   if (controller.isDisconnected) {
-    // The session exists on the server but the socket never came up. Saying
-    // "live" here would be a lie, and the real reason has already been shown.
+    // The session exists on the server but the socket never came up, and the
+    // reason has already been reported. Do not call it live.
     return session;
   }
 
-  const choice = await vscode.window.showInformationMessage(
-    "Session live. The invite link is on your clipboard.",
-    { modal: true, detail: "Link: " + session.joinUrl + "\nCode: " + session.joinCode },
-    "Copy code",
-    "Open link in browser"
+  vscode.window.showInformationMessage(
+    "Session live - invite link copied. Code: " + session.joinCode
   );
-  if (choice === "Copy code") {
-    await vscode.env.clipboard.writeText(session.joinCode);
-  } else if (choice === "Open link in browser") {
-    await vscode.env.openExternal(vscode.Uri.parse(session.joinUrl));
-  }
   return session;
 }
 
-async function joinSession(prefill) {
+async function joinSession(prefill, options = {}) {
   if (controller.inSession) {
     const choice = await vscode.window.showWarningMessage(
       "You are already in a session.",
@@ -239,7 +228,7 @@ async function joinSession(prefill) {
   const code = normalizeCode(raw);
   if (!code) throw new Error("That does not look like a join code.");
 
-  let preview = null;
+  let preview;
   try {
     preview = await api.peek(code);
   } catch (err) {
@@ -248,51 +237,20 @@ async function joinSession(prefill) {
     );
   }
 
+  const displayName = options.displayName
+    ? await identity.set(options.displayName)
+    : await identity.require("What name should the host see?");
+  if (!displayName) return undefined;
+
   if (!(await confirmWorkspaceOverwrite(preview))) return undefined;
 
-  let asGuest = false;
-  let displayName;
-  const signedIn = await auth.isSignedIn();
-
-  if (!signedIn) {
-    if (!preview.allow_guests) {
-      const record = await auth.signIn(
-        "This session only accepts signed-in accounts."
-      );
-      if (!record) return undefined;
-    } else {
-      const how = await vscode.window.showQuickPick(
-        [
-          { label: "$(person) Join as a guest", detail: "Just a display name.", guest: true },
-          { label: "$(account) Sign in", detail: "Use an account on this server.", guest: false },
-        ],
-        { title: "Join \"" + preview.title + "\" hosted by " + preview.host_name, ignoreFocusOut: true }
-      );
-      if (!how) return undefined;
-      if (how.guest) {
-        asGuest = true;
-        displayName = await vscode.window.showInputBox({
-          title: "Your display name",
-          prompt: "What should the host see?",
-          ignoreFocusOut: true,
-          validateInput: (value) =>
-            value && value.trim().length >= 2 ? null : "At least 2 characters",
-        });
-        if (!displayName) return undefined;
-      } else {
-        const record = await auth.signIn();
-        if (!record) return undefined;
-      }
-    }
-  }
-
-  const result = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: "CodeColab: joining" },
-    () => controller.joinWithCode(code, { displayName, asGuest })
-  );
-
-  if (config.autoOpenPanel()) {
-    vscode.commands.executeCommand("codecolab.sessionView.focus");
+  panel.reveal();
+  panel.setBusy("Joining");
+  let result;
+  try {
+    result = await controller.joinWithCode(code, { displayName });
+  } finally {
+    panel.setBusy(null);
   }
 
   if (result.state === "pending" && !controller.isDisconnected) {
@@ -311,7 +269,7 @@ async function confirmWorkspaceOverwrite(preview) {
   const folder = workspace.rootFolder();
   if (!folder) {
     const choice = await vscode.window.showErrorMessage(
-      "Open a folder first — the host's files are written into it.",
+      "Open a folder first - the host's files are written into it.",
       "Open folder…"
     );
     if (choice) vscode.commands.executeCommand("vscode.openFolder");
@@ -325,7 +283,7 @@ async function confirmWorkspaceOverwrite(preview) {
     {
       modal: true,
       detail:
-        'Folder: ' + folder.uri.fsPath +
+        "Folder: " + folder.uri.fsPath +
         '\nSession: "' + preview.title + '" hosted by ' + preview.host_name +
         "\n\nFiles with the same path will be overwritten. Open an empty folder instead if you want to keep what is here.",
     },
@@ -334,33 +292,42 @@ async function confirmWorkspaceOverwrite(preview) {
   return choice === "Join and overwrite";
 }
 
-async function reconnect() {
-  if (!controller.inSession) throw new Error("You are not in a session.");
-  const ok = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: "CodeColab: reconnecting" },
-    () => controller.reconnect()
-  );
-  if (ok) {
-    vscode.window.showInformationMessage("CodeColab: back in the session.");
+async function copy(field, label) {
+  if (!controller.inSession || !controller.session[field]) {
+    throw new Error("Nothing to copy yet.");
   }
-  // A failure has already been reported with its actual cause.
-  return ok;
+  await vscode.env.clipboard.writeText(controller.session[field]);
+  vscode.window.setStatusBarMessage("$(check) " + label + " copied", 3000);
 }
 
-async function copyInvite() {
+async function openInvitePage() {
   if (!controller.inSession || !controller.session.joinUrl) {
     throw new Error("No invite link yet.");
   }
-  await vscode.env.clipboard.writeText(controller.session.joinUrl);
-  vscode.window.setStatusBarMessage("$(check) Invite link copied", 3000);
+  await vscode.env.openExternal(vscode.Uri.parse(controller.session.joinUrl));
 }
 
-async function copyCode() {
-  if (!controller.inSession || !controller.session.joinCode) {
-    throw new Error("No join code yet.");
+async function pushWorkspace() {
+  requireHost();
+  panel.setBusy("Sharing workspace");
+  try {
+    await controller.pushWorkspace();
+  } finally {
+    panel.setBusy(null);
   }
-  await vscode.env.clipboard.writeText(controller.session.joinCode);
-  vscode.window.setStatusBarMessage("$(check) Join code copied", 3000);
+}
+
+async function reconnect() {
+  if (!controller.inSession) throw new Error("You are not in a session.");
+  panel.setBusy("Reconnecting");
+  let ok;
+  try {
+    ok = await controller.reconnect();
+  } finally {
+    panel.setBusy(null);
+  }
+  if (ok) vscode.window.showInformationMessage("CodeColab: back in the session.");
+  return ok;
 }
 
 async function endSession() {
@@ -381,38 +348,30 @@ async function leaveSession() {
   vscode.window.showInformationMessage("CodeColab: you left the session.");
 }
 
-function withParticipant(node, action) {
+async function removeParticipant(id) {
   requireHost();
-  const id = node && node.participantId;
-  if (!id) throw new Error("Select a participant first.");
-  action(id);
-}
-
-async function admit(node, defaultRole) {
-  requireHost();
-  const id = node && node.participantId;
-  if (!id) throw new Error("Select a participant first.");
-
-  const choice = await vscode.window.showQuickPick(
-    [
-      { label: "$(edit) Allow editing", role: "editor" },
-      { label: "$(eye) View only", role: "viewer" },
-    ],
-    { title: "Admit " + (node.label || "participant") + " as", ignoreFocusOut: true }
-  );
-  controller.approve(id, choice ? choice.role : defaultRole);
-}
-
-async function removeParticipant(node) {
-  requireHost();
-  const id = node && node.participantId;
-  if (!id) throw new Error("Select a participant first.");
+  const person = controller.participants.find((p) => p.participant_id === id);
   const choice = await vscode.window.showWarningMessage(
-    "Remove " + (node.label || "this participant") + " from the session?",
+    "Remove " + (person ? person.display_name : "this participant") + " from the session?",
     { modal: true },
     "Remove"
   );
   if (choice === "Remove") controller.removeParticipant(id);
+}
+
+async function changeName() {
+  const answer = await vscode.window.showInputBox({
+    title: "CodeColab",
+    prompt: "What name should other people see?",
+    value: identity.get() || identity.suggest(),
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value && value.trim().length >= 2 ? null : "At least 2 characters",
+  });
+  if (!answer) return;
+  await identity.set(answer);
+  panel.render();
+  vscode.window.showInformationMessage("CodeColab: you are now " + answer.trim() + ".");
 }
 
 // --------------------------------------------------------------------------
@@ -446,12 +405,10 @@ async function handleUri(uri) {
       "Join without switching"
     );
     if (!choice) return;
-    if (choice === "Trust and switch") {
-      await config.setServerUrl(server);
-    }
+    if (choice === "Trust and switch") await config.setServerUrl(server);
   }
 
-  await joinSession(code);
+  await run("uri:join", () => joinSession(code), []);
 }
 
 function deactivate() {

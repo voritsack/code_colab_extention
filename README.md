@@ -27,16 +27,30 @@ Backend: <https://github.com/voritsack/code_colab_back>
 4. The host's project is written into your open folder and edits flow both
    ways.
 
-No account is needed to join a guest-friendly session. Hosting always needs
-one — that is who the session belongs to.
+There are no accounts at all. You pick a display name once, and the session
+token you are issued decides what you can do. Nothing to register, nothing to
+remember, nothing to leak.
 
-## While it runs
+## The panel
 
-The **CodeColab** view in the activity bar shows the code, the invite link and
-everyone in the room, with the file each person currently has open. From its
-title bar the host can pause, resume, re-push the workspace and end the
-session; from the list, admit or refuse newcomers, switch someone between
-editing and view-only, or remove them.
+Everything lives in the **CodeColab** view in the activity bar — no command
+names to memorise.
+
+Before a session it has your display name, a field for the session name with
+two switches (admit each person, open to anyone with the code) and a **Start
+session** button; below that, a box to paste a code or invite link and
+**Join**.
+
+During a session it shows the title and status, the join code (click to copy),
+**Copy link** and **Open page**, then **Pause**/**Resume**, **Push
+workspace** and **End session** for the host, or **Resync** and **Leave** for
+everyone else. Each person in the room is listed with their role and the file
+they have open: newcomers get **Admit as editor**, **View only** and
+**Refuse**; people already in get a role toggle and **Remove**.
+
+If the connection drops, the panel says why and offers **Reconnect**.
+
+Every one of those is also a command in the palette, if you prefer typing.
 
 **Pause** freezes the session in both directions — nothing propagates and
 nothing is stored. Useful for teaching: freeze the picture, talk, then resume.
@@ -72,14 +86,15 @@ admin dashboard loads - but no session can work until it is fixed.
 
 | Command | Who |
 | --- | --- |
-| Start session and generate link | anyone signed in |
+| Start session and generate link | anyone |
 | Join session by code or link | anyone |
 | Copy invite link · Copy join code | host |
 | Pause · Resume · End session | host |
 | Push current workspace to everyone | host |
 | Reconnect to session | anyone, after a drop |
 | Resynchronise from host · Leave session | participant |
-| Sign in · Sign out · Create an account | anyone |
+| Change your display name | anyone |
+| Open the CodeColab panel | anyone |
 | Show log | anyone |
 
 ## Settings
@@ -98,9 +113,8 @@ Binary files are skipped automatically.
 
 ## Security
 
-- **Tokens never leave SecretStorage**, and they are keyed by server origin, so
-  pointing the extension at a different backend never reuses credentials from
-  another one. Access tokens are short-lived and refreshed silently.
+- **Nothing to steal.** There are no passwords and no long-lived credentials.
+  A session token is scoped to one session and dies with it.
 - **The WebSocket authenticates with a session-scoped token** sent in an
   `Authorization` header rather than the query string, keeping it out of proxy
   logs. That token is only good for one participant in one session.
@@ -132,7 +146,7 @@ names, so that decision is always yours.
 ```bash
 npm install
 npm run package          # produces codecolab-<version>.vsix
-code --install-extension codecolab-1.4.0.vsix
+code --install-extension codecolab-2.0.0.vsix
 ```
 
 If the old `blogapp-sync` extension is still installed, uninstall it — this is
@@ -154,14 +168,14 @@ not escape the temporary workspace.
 
 ```
 extension.js        activation, commands, the vscode:// handler
+src/panel.js        the activity-bar view, every control in it
+src/identity.js     your display name
 src/config.js       settings and environment overrides
 src/http.js         JSON client over node's http/https
-src/auth.js         sign-in, SecretStorage, token refresh
 src/api.js          REST wrappers
 src/session.js      the session controller: socket, edits, roles
 src/workspace.js    reading the folder, writing peers' edits safely
 src/paths.js        path sanitising
 src/code.js         join-code parsing
-src/tree.js         the activity-bar view
 src/status.js       the status-bar item
 ```

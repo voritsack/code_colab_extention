@@ -48,11 +48,9 @@ const HEARTBEAT_TIMEOUT_MS = 70000;
 class SessionController {
   /**
    * @param {import("./api").Api} api
-   * @param {import("./auth").Auth} auth
    */
-  constructor(api, auth) {
+  constructor(api) {
     this.api = api;
-    this.auth = auth;
     this.clientId = "vscode-" + Math.random().toString(36).slice(2, 11);
 
     this.session = null; // { publicId, title, joinCode, joinUrl, ... }
@@ -109,7 +107,7 @@ class SessionController {
   // -- starting ---------------------------------------------------------
 
   /** Create a session from the current workspace and return the invite. */
-  async startHosting({ title, allowGuests, requireApproval }) {
+  async startHosting({ title, displayName, allowGuests, requireApproval, accessCode }) {
     if (this.inSession) {
       throw new Error("Already in a session. End it first.");
     }
@@ -119,9 +117,11 @@ class SessionController {
 
     const created = await this.api.createSession({
       title,
+      display_name: displayName,
       workspace_name: workspace.rootName(),
       allow_guests: allowGuests,
       require_approval: requireApproval,
+      access_code: accessCode || null,
     });
 
     this.session = {
@@ -146,22 +146,15 @@ class SessionController {
   }
 
   /** Join an existing session. Returns the join result. */
-  async joinWithCode(code, { displayName, asGuest } = {}) {
+  async joinWithCode(code, { displayName } = {}) {
     if (this.inSession) {
       throw new Error("Already in a session. Leave it first.");
-    }
-
-    let accessToken = null;
-    if (!asGuest) {
-      const record = await this.auth.load();
-      accessToken = record ? record.access : null;
     }
 
     const result = await this.api.join({
       code,
       displayName,
       clientId: this.clientId,
-      accessToken,
     });
 
     this.session = {
@@ -780,7 +773,11 @@ class SessionController {
         const scan = await workspace.collectFiles(token);
         if (token.isCancellationRequested) return null;
         progress.report({ message: "uploading " + scan.files.length + " file(s)…" });
-        await this.api.uploadSnapshot(this.session.publicId, scan.files);
+        await this.api.uploadSnapshot(
+          this.session.publicId,
+          this.sessionToken,
+          scan.files
+        );
         return scan;
       }
     );
@@ -848,7 +845,7 @@ class SessionController {
     this.send({ type: "end_session" });
     // Fall back to REST in case the socket is already gone.
     try {
-      await this.api.lifecycle(this.session.publicId, "end");
+      await this.api.lifecycle(this.session.publicId, this.sessionToken, "end");
     } catch (err) {
       log.warn("REST end failed: " + err.message);
     }
