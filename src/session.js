@@ -957,12 +957,23 @@ class SessionController {
       );
     }
     if (result.skipped.length) {
-      log.info("Skipped " + result.skipped.length + " file(s): " + result.skipped.join(", "));
+      log.info(
+        "Skipped " + result.skipped.length + " file(s): " + result.skipped.join(", ")
+      );
     }
     if (!silent) {
-      vscode.window.showInformationMessage(
-        "CodeColab: shared " + result.files.length + " file(s)."
-      );
+      // Say what was left out as well as what went. A missing file is
+      // confusing for everyone if nobody mentions it.
+      const note =
+        "CodeColab: shared " + result.files.length + " file(s)." +
+        (result.skipped.length ? " " + result.skipped.length + " skipped." : "");
+      if (result.skipped.length) {
+        vscode.window.showInformationMessage(note, "Show log").then((choice) => {
+          if (choice === "Show log") log.show();
+        });
+      } else {
+        vscode.window.showInformationMessage(note);
+      }
     }
     return result;
   }

@@ -199,6 +199,11 @@ async function hostPhase() {
   fs.writeFileSync(path.join(dir, "README.md"), "# host project\n");
   fs.mkdirSync(path.join(dir, "node_modules", "junk"), { recursive: true });
   fs.writeFileSync(path.join(dir, "node_modules", "junk", "index.js"), "// ignore me\n");
+  // Credentials that happen to sit in the shared folder must not go with it.
+  fs.writeFileSync(path.join(dir, ".env"), "DB_PASSWORD=hunter2\n");
+  fs.writeFileSync(path.join(dir, ".env.example"), "DB_PASSWORD=\n");
+  fs.writeFileSync(path.join(dir, "id_rsa"), "-----BEGIN PRIVATE KEY-----\n");
+  fs.writeFileSync(path.join(dir, "server.pem"), "-----BEGIN CERTIFICATE-----\n");
 
   const controller = newController();
 
@@ -269,6 +274,10 @@ async function hostPhase() {
     shared.join(", ")
   );
   check("host: node_modules excluded", !shared.some((p) => p.indexOf("node_modules") !== -1));
+  check("host: .env not shared", !shared.includes(".env"), shared.join(", "));
+  check("host: private key not shared", !shared.includes("id_rsa"));
+  check("host: certificate not shared", !shared.includes("server.pem"));
+  check("host: .env.example still shared", shared.includes(".env.example"), shared.join(", "));
 
   const doc = stub.openDocument(path.join(dir, "src", "app.js"), "console.log(1);\n");
   doc.setText("console.log('typed by host');\n");

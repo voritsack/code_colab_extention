@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.0
+
+- **Credential files are no longer shared.** `.env`, `.ssh/`, `.aws/`,
+  `*.pem`, `*.key`, `id_rsa*`, `.npmrc` and `secrets.*` were being uploaded
+  with the rest of the folder and pushed to everyone admitted to the session.
+  They are excluded by default now; `.env.example` still goes, since that is
+  what it is for.
+- The host is told how many files were skipped, not just how many were sent.
+
 ## 2.2.0
 
 - First Marketplace release. The extension id is now `voritsack.codecolab`,
