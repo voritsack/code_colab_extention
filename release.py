@@ -10,9 +10,9 @@ it into the backend's downloads folder with a fresh manifest, and pushes both
 repositories. The deployed server rebuilds from git on start, so the push is
 what actually hands the build to installed extensions.
 
-A copy of this script lives inside VScode-ex as well, so the extension repo
-carries its own release tooling; either copy works, the workspace root is
-located by walking up from wherever the script happens to sit.
+This script lives in the extension repo but drives both of them, so it
+locates the workspace root by walking up from its own location rather than
+assuming a working directory.
 """
 
 from __future__ import annotations

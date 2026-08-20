@@ -1,7 +1,7 @@
 # Cut a release (patch bump, package, publish, push both repos).
-# Either copy of release.py works - it finds the workspace root by itself.
+# release.py finds the workspace root by walking up from its own location,
+# so it runs the same from any working directory.
 
-python "C:/Users/davit/OneDrive/Desktop/colab extension/release.py" --notes "what changed"
 python "C:/Users/davit/OneDrive/Desktop/colab extension/VScode-ex/release.py" --notes "what changed"
 
 # Variants
