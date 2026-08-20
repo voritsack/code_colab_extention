@@ -73,10 +73,16 @@ class Api {
     return request(this.attachmentsUrl(publicId), { headers: bearer(sessionToken) });
   }
 
-  uploadAttachment(publicId, sessionToken, filePath, fileName, contentType) {
+  /**
+   * @param {string} [workspacePath] Where the file belongs in the shared
+   *   folder. Naming it turns the upload into a project file everyone writes
+   *   to disk; leaving it out keeps it a loose attachment.
+   */
+  uploadAttachment(publicId, sessionToken, filePath, fileName, contentType, workspacePath) {
     return upload(this.attachmentsUrl(publicId), filePath, {
       fileName,
       contentType,
+      fields: workspacePath ? { path: workspacePath } : {},
       headers: bearer(sessionToken),
     });
   }

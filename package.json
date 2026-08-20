@@ -1,6 +1,6 @@
 {
   "name": "codecolab",
-  "displayName": "CodeColab — Live Code Collaboration",
+  "displayName": "CodeColab \u2014 Live Code Collaboration",
   "publisher": "voritsack",
   "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
   "version": "2.6.2",
@@ -39,7 +39,7 @@
         "codecolab.wsUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket origin. Leave empty to derive it from `#codecolab.serverUrl#` (`http` → `ws`). Overridden by `CODECOLAB_WS_URL`."
+          "markdownDescription": "WebSocket origin. Leave empty to derive it from `#codecolab.serverUrl#` (`http` \u2192 `ws`). Overridden by `CODECOLAB_WS_URL`."
         },
         "codecolab.exclude": {
           "type": "array",
@@ -87,7 +87,7 @@
             "**/secrets.yaml",
             "**/secrets.yml"
           ],
-          "markdownDescription": "Glob patterns never shared or synchronised. The defaults cover generated output and, deliberately, credential files — sharing a folder should not hand over its `.env` or private keys. `.env.example` is still shared, since that is the point of it. Anything you add here applies to both directions."
+          "markdownDescription": "Glob patterns never shared or synchronised. The defaults cover generated output and, deliberately, credential files \u2014 sharing a folder should not hand over its `.env` or private keys. `.env.example` is still shared, since that is the point of it. Anything you add here applies to both directions."
         },
         "codecolab.maxFileBytes": {
           "type": "number",
@@ -117,12 +117,17 @@
             "off"
           ],
           "enumDescriptions": [
-            "Download and install new versions in the background, then reload the window as soon as no session is running. Only ever from the configured server, and only over https (or localhost) — on a plain-http server this falls back to asking.",
+            "Download and install new versions in the background, then reload the window as soon as no session is running. Only ever from the configured server, and only over https (or localhost) \u2014 on a plain-http server this falls back to asking.",
             "Tell you a new version is available and let you decide.",
             "Never check."
           ],
           "default": "silent",
-          "markdownDescription": "How to handle builds published by `#codecolab.serverUrl#`. `silent` installs them in the background and reloads the window once no session is running. Set this to `off` if you installed from the Marketplace — VS Code already keeps the extension current, and both updating at once means two sources installing over each other."
+          "markdownDescription": "How to handle builds published by `#codecolab.serverUrl#`. `silent` installs them in the background and reloads the window once no session is running. Set this to `off` if you installed from the Marketplace \u2014 VS Code already keeps the extension current, and both updating at once means two sources installing over each other."
+        },
+        "codecolab.autoWriteSharedFiles": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Write files shared with **Share this one** straight into your folder. The live sync only carries text under `#codecolab.maxFileBytes#`, so a binary or oversized file travels a different way; this decides whether it lands at its place in the folder or waits in the session's file list. Turn it off and nothing is written without you asking for it."
         }
       }
     },
@@ -222,6 +227,12 @@
         "title": "Rejoin the previous session",
         "category": "CodeColab",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "codecolab.syncSharedFiles",
+        "title": "Write shared files into the folder",
+        "category": "CodeColab",
+        "icon": "$(cloud-download)"
       }
     ],
     "viewsContainers": {
@@ -306,6 +317,10 @@
         },
         {
           "command": "codecolab.reconnect",
+          "when": "codecolab.inSession"
+        },
+        {
+          "command": "codecolab.syncSharedFiles",
           "when": "codecolab.inSession"
         }
       ]

@@ -747,24 +747,83 @@ async function transferPhase() {
   controller.unshareFile("debug.log");
   check("share: can be revoked", !controller.manualIncludes.has("debug.log"));
 
-  // ---- a binary file goes out as an attachment instead of the text sync ---
+  // ---- a binary file still syncs, over the other transport ----------------
+  //
+  // "Share this one" means the same thing whatever the file is: it ends up at
+  // that path in everyone's folder. Text goes through the live sync; a PNG
+  // cannot, so the bytes go over the attachment transport tagged with where
+  // they belong, and every client writes them there.
   guest.frames.length = 0;
   const routed = await controller.shareFile("diagram.png");
-  check("share: binary file routed to attachments",
-    routed && routed.mode === "attachment", JSON.stringify(routed || null));
+  check("share: binary file shared as a project file",
+    routed && routed.mode === "file", JSON.stringify(routed || null));
   check("share: binary file kept out of the text sync",
     !guest.frames.some((f) => f.type === "file_update" && f.path === "diagram.png"));
-  check("share: binary file not added to the manual includes",
-    !controller.manualIncludes.has("diagram.png"));
-  check("share: attachment carries the file's bytes",
+  check("share: binary file added to the manual includes",
+    controller.manualIncludes.has("diagram.png"));
+  check("share: the upload carries the file's bytes",
     routed.attachment && routed.attachment.size === picture.length,
     String(routed.attachment && routed.attachment.size));
-  check("share: attachment keeps the name",
+  check("share: the upload keeps the name",
     routed.attachment.name === "diagram.png", String(routed.attachment.name));
+  check("share: and says where it belongs",
+    routed.attachment.path === "diagram.png", String(routed.attachment.path));
+
+  const told = await guest.waitFrame("attachments");
+  const sharedEntry = (told.attachments || []).find((a) => a.path === "diagram.png");
+  check("share: the destination reaches everyone else", Boolean(sharedEntry),
+    JSON.stringify(told.attachments || []));
+  check("share: with a digest to check it against",
+    Boolean(sharedEntry && sharedEntry.sha256), String(sharedEntry && sharedEntry.sha256));
+
+  // What a client that does not have it yet does with that list.
+  const localCopy = path.join(dir, "diagram.png");
+  fs.unlinkSync(localCopy);
+  await controller.refreshAttachments();
+  const restored = await controller.pullSharedFiles({ force: true });
+  check("share: a missing copy is written back", restored.indexOf("diagram.png") !== -1,
+    JSON.stringify(restored));
+  check("share: byte for byte", fs.existsSync(localCopy) &&
+    fs.readFileSync(localCopy).equals(picture));
+
+  // Running again must settle rather than rewrite: the digests already match.
+  const again = await controller.pullSharedFiles({ force: true });
+  check("share: a second pass writes nothing", again.length === 0, JSON.stringify(again));
+
   await controller.detachAttachment(routed.attachment.id);
   await controller.refreshAttachments();
 
+  // ---- oversized text takes the same road ---------------------------------
+  //
+  // It would survive a UTF-8 round trip, so the binary check passes it, but
+  // the server refuses a frame that big. Sharing it has to work anyway.
+  const bulky = "x".repeat(700000) + "\n";
+  fs.writeFileSync(path.join(dir, "fixture.sql"), bulky);
+  guest.frames.length = 0;
+  const big = await controller.shareFile("fixture.sql");
+  check("share: oversized text shared as a project file",
+    big && big.mode === "file", JSON.stringify(big || null));
+  check("share: oversized text kept off the socket",
+    !guest.frames.some((f) => f.type === "file_update" && f.path === "fixture.sql"));
+  check("share: oversized text knows where it belongs",
+    big.attachment.path === "fixture.sql", String(big.attachment.path));
+
+  fs.unlinkSync(path.join(dir, "fixture.sql"));
+  await controller.refreshAttachments();
+  const bigBack = await controller.pullSharedFiles({ force: true });
+  check("share: oversized text is written back",
+    bigBack.indexOf("fixture.sql") !== -1, JSON.stringify(bigBack));
+  check("share: oversized text is intact",
+    fs.readFileSync(path.join(dir, "fixture.sql"), "utf8") === bulky);
+
+  await controller.detachAttachment(big.attachment.id);
+  await controller.refreshAttachments();
+
   // ---- attachments --------------------------------------------------------
+  // waitFrame returns the first frame of its type still in the buffer, and
+  // sharing above produced several. Drop them, or the next wait answers with
+  // one of those instead of the broadcast this block is about.
+  guest.frames.length = 0;
   const sent = await controller.attachFile(
     path.join(dir, "diagram.png"),
     "diagram.png",

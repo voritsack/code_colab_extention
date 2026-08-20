@@ -7,6 +7,7 @@
  * plain relative path inside the first workspace folder.
  */
 
+const crypto = require("crypto");
 const vscode = require("vscode");
 const config = require("./config");
 const log = require("./log");
@@ -221,6 +222,53 @@ async function writeContent(relativePath, content) {
   return true;
 }
 
+/**
+ * Put raw bytes at `relativePath`, creating parent folders as needed.
+ *
+ * The text path above cannot do this: it round-trips through a string, which
+ * is exactly what a PNG or a zip does not survive. This is what a file too
+ * big or too binary for the live sync is written with when it arrives over
+ * the attachment transport instead.
+ *
+ * @returns {Promise<boolean>} false if the path was refused or unchanged
+ */
+async function writeBytes(relativePath, bytes) {
+  const uri = resolve(relativePath);
+  if (!uri) return false;
+
+  // Identical bytes still bump the mtime and wake every watcher in the
+  // editor, and here that would also bounce straight back as an edit.
+  try {
+    if (Buffer.from(await vscode.workspace.fs.readFile(uri)).equals(bytes)) {
+      return false;
+    }
+  } catch (err) {
+    /* not there yet, which is the usual case */
+  }
+
+  const parent = vscode.Uri.joinPath(uri, "..");
+  await vscode.workspace.fs.createDirectory(parent);
+  await vscode.workspace.fs.writeFile(uri, bytes);
+  return true;
+}
+
+/**
+ * SHA-256 of a workspace file, or null if it is not there.
+ *
+ * Compared against the digest the server publishes, so a file that arrived
+ * and a file that was already correct look the same and neither is rewritten.
+ */
+async function digestOf(relativePath) {
+  const uri = resolve(relativePath);
+  if (!uri) return null;
+  try {
+    const bytes = Buffer.from(await vscode.workspace.fs.readFile(uri));
+    return crypto.createHash("sha256").update(bytes).digest("hex");
+  } catch (err) {
+    return null;
+  }
+}
+
 async function deleteContent(relativePath) {
   const uri = resolve(relativePath);
   if (!uri) return false;
@@ -343,6 +391,8 @@ module.exports = {
   isExcluded,
   collectFiles,
   writeContent,
+  writeBytes,
+  digestOf,
   deleteContent,
   looksEmpty,
   globToRegExp,

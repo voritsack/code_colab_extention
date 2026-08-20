@@ -127,12 +127,20 @@ admin dashboard loads - but no session can work until it is fixed.
 | `codecolab.maxFiles` | `2000` | Upload cap when a session starts. |
 | `codecolab.syncDelayMs` | `300` | Idle time before an edit is sent. |
 | `codecolab.autoOpenPanel` | `true` | Reveal the view when a session starts. |
+| `codecolab.autoWriteSharedFiles` | `true` | Write files shared with **Share this one** into your folder, even when they were too big or too binary for the live sync. Off means they wait in the panel. |
 | `codecolab.autoUpdate` | `silent` | `silent`, `ask` or `off`. See below. |
 
-Binary files are skipped by the automatic sync, because whole-file
-text sync would mangle them. Sharing one by hand still works: pick it
-in the file search and it is sent as an attachment instead, which
-everyone can save from the panel.
+The automatic sync only carries text under `maxFileBytes`: it is a
+whole-file text channel, and a PNG does not survive a UTF-8 round trip.
+**Share this one** works on anything regardless. A file the sync cannot
+take is uploaded and streamed off disk instead, tagged with where it
+belongs, and every other client writes it to that path in their folder -
+same result, different road. Set `codecolab.autoWriteSharedFiles` to
+`false` if you would rather be asked; the files then wait in the panel
+under *Shared project files*, with a button to write them.
+
+The one difference worth knowing: the live sync keeps flowing after the
+first send, and this does not. Change such a file and share it again.
 
 ## Security
 

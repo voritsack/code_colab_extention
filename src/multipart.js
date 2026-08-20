@@ -4,8 +4,9 @@
  * Uploading one file as multipart/form-data.
  *
  * Hand-rolled rather than pulling in a dependency: the shape is fixed - one
- * field, one file - and the body is streamed off disk, so a 25 MB attachment
- * is never held in memory on top of the copy already on the filesystem.
+ * file, plus a handful of short text fields - and the body is streamed off
+ * disk, so a 25 MB attachment is never held in memory on top of the copy
+ * already on the filesystem.
  */
 
 const crypto = require("crypto");
@@ -18,6 +19,8 @@ const { URL } = require("url");
 const { HttpError } = require("./http");
 
 const CRLF = "\r\n";
+// A quote or a newline in a field name would break out of the header.
+const UNSAFE_FIELD_CHARS = /["\r\n]/g;
 
 function upload(
   url,
@@ -26,6 +29,7 @@ function upload(
     fieldName = "file",
     fileName,
     contentType = "application/octet-stream",
+    fields = {},
     headers = {},
     timeoutMs = 300000,
   } = {}
@@ -56,8 +60,21 @@ function upload(
     // A quote in a filename would otherwise break out of the header field.
     const name = (fileName || path.basename(filePath)).replace(/["\r\n]/g, "");
 
+    // Text fields first: the server reads them off the parsed form, but a
+    // streaming parser reaching the file last is the friendlier order.
+    let prefix = "";
+    for (const key of Object.keys(fields)) {
+      const value = fields[key];
+      if (value === undefined || value === null || value === "") continue;
+      prefix +=
+        "--" + boundary + CRLF +
+        'Content-Disposition: form-data; name="' + key.replace(UNSAFE_FIELD_CHARS, "") + '"' +
+        CRLF + CRLF + String(value) + CRLF;
+    }
+
     const head = Buffer.from(
-      "--" + boundary + CRLF +
+      prefix +
+        "--" + boundary + CRLF +
         'Content-Disposition: form-data; name="' + fieldName +
         '"; filename="' + name + '"' + CRLF +
         "Content-Type: " + contentType + CRLF + CRLF,

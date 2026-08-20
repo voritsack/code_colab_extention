@@ -51,6 +51,7 @@ module.exports = {
   maxFiles: () => Number(conf().get("maxFiles")) || 2000,
   syncDelayMs: () => Number(conf().get("syncDelayMs")) || 300,
   autoOpenPanel: () => conf().get("autoOpenPanel") !== false,
+  autoWriteSharedFiles: () => conf().get("autoWriteSharedFiles") !== false,
   setServerUrl: (value) =>
     conf().update("serverUrl", trimSlashes(value), vscode.ConfigurationTarget.Global),
 };

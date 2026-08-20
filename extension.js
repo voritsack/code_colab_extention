@@ -94,6 +94,7 @@ function activate(context) {
   register("codecolab.showLog", () => log.show());
   register("codecolab.showPanel", () => panel.reveal());
   register("codecolab.checkForUpdates", () => updater.check({ force: true }));
+  register("codecolab.syncSharedFiles", () => syncSharedFiles());
   register("codecolab.rejoinSession", () => restoreSession({ announce: true }));
 
   context.subscriptions.push(
@@ -113,6 +114,7 @@ function activate(context) {
     log.warn("Could not restore the previous session: " + (err && err.message))
   );
   updater.check().catch((err) => log.info("Update check skipped: " + (err && err.message)));
+  context.subscriptions.push(updater.poll());
 }
 
 /**
@@ -190,6 +192,8 @@ async function handleIntent(message) {
     role: () => host().setRole(message.id, message.role),
     remove: () => removeParticipant(message.id),
     showLog: () => log.show(),
+    checkUpdates: () => updater.check({ force: true }),
+    syncSharedFiles: () => syncSharedFiles(),
   };
 
   const action = actions[message.type];
@@ -503,6 +507,29 @@ async function detachAttachment(id) {
   await controller.refreshAttachments();
 }
 
+/**
+ * Write every shared file into the folder now.
+ *
+ * This happens by itself whenever the list changes; the command exists for
+ * the case where somebody turned that off, or joined after the fact.
+ */
+async function syncSharedFiles() {
+  requireSession();
+  panel.setBusy("Writing shared files");
+  let written;
+  try {
+    written = await controller.pullSharedFiles({ force: true });
+  } finally {
+    panel.setBusy(null);
+  }
+  vscode.window.setStatusBarMessage(
+    written.length
+      ? "$(check) Wrote " + written.length + " shared file(s)"
+      : "$(check) Every shared file is already up to date",
+    4000
+  );
+}
+
 async function searchFiles(query) {
   const items = await workspace.listCandidates(query);
   panel.postCandidates(items);
@@ -511,14 +538,11 @@ async function searchFiles(query) {
 async function shareFile(relativePath) {
   requireSession();
   const result = await controller.shareFile(relativePath);
-  if (result && result.mode === "attachment") {
-    // Not text, so it went out as an attachment rather than joining the sync.
-    vscode.window.setStatusBarMessage("$(check) Sent " + relativePath, 4000);
-    vscode.window.showInformationMessage(
-      "CodeColab: " +
-        relativePath +
-        " is not a text file, so it was sent as an attachment."
-    );
+  if (result && result.mode === "file") {
+    // Too big or too binary for the live sync, so the bytes went over the
+    // attachment transport - but tagged with this path, so everyone writes
+    // it into their folder instead of it landing in a list.
+    vscode.window.setStatusBarMessage("$(check) Shared " + relativePath, 4000);
   } else {
     vscode.window.setStatusBarMessage("$(check) Sharing " + relativePath, 4000);
   }

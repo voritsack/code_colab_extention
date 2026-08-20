@@ -139,6 +139,9 @@ class SessionPanel {
       board: c.board,
       locks: c.locks,
       attachments: c.attachments,
+      // Attachments that are really project files, and so have somewhere to
+      // be written to. The panel offers to do that by hand when there are any.
+      sharedFileCount: (c.attachments || []).filter((a) => a && a.path).length,
       manualIncludes: Array.from(c.manualIncludes || []),
     });
   }
@@ -306,7 +309,7 @@ class SessionPanel {
     border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,.22));
     word-break: break-all;
   }
-  .foot button { margin-top: 6px; }
+  .footbuttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .brandbar {
     display: flex; align-items: center; gap: 7px; margin-bottom: 10px;
     font-weight: 600; font-size: 12px;
@@ -630,6 +633,44 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
   }
 
   function renderFiles() {
+    const all = state.attachments || [];
+    // Two different things share one transport. A project file names where it
+    // belongs and is written there; a loose one is just passed round.
+    const inFolder = all.filter((a) => a.path);
+    const loose = all.filter((a) => !a.path);
+
+    if (inFolder.length) {
+      root.appendChild(el("h2", null, "Shared project files"));
+      root.appendChild(el("p", "muted small",
+        "Too big or too binary for the live sync, so they travel separately " +
+        "\u2014 but they still belong in the folder, and are written there."));
+
+      const list = el("div", "card");
+      inFolder.forEach((a) => {
+        const row = el("div", "person");
+        const who = el("div", "who");
+        who.appendChild(el("div", null, a.path));
+        who.appendChild(el("div", "file", bytes(a.size) + " \u00b7 " + a.uploaded_by));
+        const acts = el("div", "acts");
+        acts.appendChild(button("Save a copy", "secondary tiny",
+          () => send("saveAttachment", { id: a.id })));
+        if (state.isHost || a.participant_id === state.myId) {
+          acts.appendChild(button("Remove", "secondary tiny",
+            () => send("detach", { id: a.id })));
+        }
+        who.appendChild(acts);
+        row.appendChild(who);
+        list.appendChild(row);
+      });
+      root.appendChild(list);
+
+      const folderActions = el("div", "row");
+      folderActions.appendChild(
+        button("Write them into the folder", "secondary", () => send("syncSharedFiles"))
+      );
+      root.appendChild(folderActions);
+    }
+
     // Anything at all, passed round the session and deleted with it.
     root.appendChild(el("h2", null, "Send a file"));
     root.appendChild(el("p", "muted small",
@@ -638,16 +679,16 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
 
     const actions = el("div", "row");
     actions.appendChild(button("Attach files\u2026", null, () => send("attach")));
-    if ((state.attachments || []).length) {
+    if (all.length) {
       actions.appendChild(button("Save all as zip", "secondary", () => send("saveAll")));
     }
     root.appendChild(actions);
 
-    if (!(state.attachments || []).length) {
+    if (!loose.length) {
       root.appendChild(el("p", "muted small", "Nothing attached yet."));
     } else {
       const list = el("div", "card");
-      state.attachments.forEach((a) => {
+      loose.forEach((a) => {
         const row = el("div", "person");
         const who = el("div", "who");
         who.appendChild(el("div", null, a.name));
@@ -673,7 +714,7 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
     root.appendChild(el("h2", null, "Share a skipped file"));
     root.appendChild(el("p", "muted small",
       "Search the folder. Anything excluded or too big is listed with why; " +
-      "share it and it joins the session."));
+      "share it and it reaches everyone \u2014 whatever its size or type."));
 
     const search = el("div", "composer");
     const input = document.createElement("input");
@@ -895,7 +936,17 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
 
     const foot = el("div", "foot");
     foot.appendChild(el("div", null, state.server));
-    foot.appendChild(button("Show log", "secondary tiny", () => send("showLog")));
+    const footActions = el("div", "footbuttons");
+    footActions.appendChild(button("Show log", "secondary tiny", () => send("showLog")));
+    footActions.appendChild(
+      button("Check for updates", "secondary tiny", () => send("checkUpdates"))
+    );
+    if (state.inSession && state.sharedFileCount) {
+      footActions.appendChild(
+        button("Write shared files", "secondary tiny", () => send("syncSharedFiles"))
+      );
+    }
+    foot.appendChild(footActions);
     root.appendChild(foot);
 
     if (keptChat) {

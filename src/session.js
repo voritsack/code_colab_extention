@@ -8,6 +8,9 @@
  * machine or a remote edit lands on disk.
  */
 
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const vscode = require("vscode");
 const WebSocket = require("ws");
 
@@ -69,6 +72,11 @@ class SessionController {
     // session only. Deliberately not persisted: an override should not
     // silently apply to the next session on the same folder.
     this.manualIncludes = new Set();
+    // Files shared into the session that were too big or too binary for the
+    // live sync, keyed by workspace path -> the digest we last wrote. Kept so
+    // a re-broadcast of the same list is not a reason to touch the disk.
+    this.syncedShares = new Map();
+    this.pullingShares = false;
     this.status = "idle"; // idle | connecting | active | paused | pending | ended
     this.role = null;
     this.participantId = null;
@@ -688,6 +696,12 @@ class SessionController {
       case "attachments":
         this.attachments = message.attachments || [];
         this.changed();
+        // Some of these are project files that only travelled this way
+        // because the sync channel is text-only. They belong on disk, not in
+        // a list waiting to be saved by hand.
+        this.pullSharedFiles().catch((err) =>
+          log.warn("Could not write shared files: " + (err && err.message))
+        );
         break;
 
       case "edit_request":
@@ -1050,9 +1064,15 @@ class SessionController {
       throw new Error("Not connected to the session.");
     }
     const content = await workspace.readTextFile(relativePath);
-    if (content === null) {
-      const attachment = await this.attachBinaryFile(relativePath);
-      return { path: relativePath, mode: "attachment", attachment };
+    // Two things the live sync cannot carry: bytes that do not survive a
+    // UTF-8 round trip, and anything past the size the server accepts on a
+    // socket frame. Both go the other way instead - the transport changes,
+    // not the meaning of "share this one".
+    const tooBig =
+      content !== null && Buffer.byteLength(content, "utf8") > config.maxFileBytes();
+    if (content === null || tooBig) {
+      const attachment = await this.shareOversizedFile(relativePath);
+      return { path: relativePath, mode: "file", attachment };
     }
     this.manualIncludes.add(relativePath);
     this.send({ type: "file_update", path: relativePath, content });
@@ -1061,8 +1081,16 @@ class SessionController {
     return { path: relativePath, mode: "sync" };
   }
 
-  /** Send a workspace file that cannot survive the text sync as an attachment. */
-  async attachBinaryFile(relativePath) {
+  /**
+   * Share a workspace file that cannot survive the text sync.
+   *
+   * The live sync carries UTF-8 under a size cap, so a PNG, a zip or a 4 MB
+   * fixture cannot go through it. This sends the bytes over the attachment
+   * transport instead - streamed off disk, not held in memory - but tagged
+   * with where the file belongs, which is what makes every other client
+   * write it into the folder rather than list it.
+   */
+  async shareOversizedFile(relativePath) {
     const uri = workspace.resolve(relativePath);
     if (!uri) {
       throw new Error(relativePath + " is outside the shared folder.");
@@ -1071,10 +1099,93 @@ class SessionController {
     const attachment = await this.attachFile(
       uri.fsPath,
       name,
-      workspace.contentTypeFor(name)
+      workspace.contentTypeFor(name),
+      relativePath
     );
+    this.manualIncludes.add(relativePath);
+    // Our own copy is already correct; record it so the broadcast that comes
+    // back does not read as something to download.
+    if (attachment && attachment.sha256) {
+      this.syncedShares.set(relativePath, attachment.sha256);
+    }
     await this.refreshAttachments();
     return attachment;
+  }
+
+  /**
+   * Write any shared file we do not already have to disk.
+   *
+   * Runs on every attachment broadcast and can be asked for by hand. It is
+   * safe to call repeatedly: a file whose digest already matches is left
+   * alone, so this settles rather than looping.
+   *
+   * @param {{force?: boolean}} [options] force ignores the "off" setting and
+   *   the digests remembered from earlier in the session.
+   * @returns {Promise<string[]>} the paths written
+   */
+  async pullSharedFiles({ force = false } = {}) {
+    if (this.pullingShares) return [];
+    if (!force && !config.autoWriteSharedFiles()) return [];
+    if (!this.session || !this.sessionToken) return [];
+    if (!workspace.rootFolder()) return [];
+
+    const wanted = (this.attachments || []).filter((a) => a && a.path);
+    if (!wanted.length) return [];
+    if (force) this.syncedShares.clear();
+
+    this.pullingShares = true;
+    const written = [];
+    try {
+      for (const item of wanted) {
+        if (this.syncedShares.get(item.path) === item.sha256) continue;
+        try {
+          if ((await workspace.digestOf(item.path)) === item.sha256) {
+            this.syncedShares.set(item.path, item.sha256);
+            continue;
+          }
+          if (await this.writeSharedFile(item)) written.push(item.path);
+        } catch (err) {
+          log.warn(
+            "Could not write " + item.path + ": " + (err && err.message)
+          );
+        }
+      }
+    } finally {
+      this.pullingShares = false;
+    }
+
+    if (written.length) {
+      log.info("Wrote " + written.length + " shared file(s) into the folder");
+      this.changed();
+    }
+    return written;
+  }
+
+  /** Download one shared file, check it, and put it where it belongs. */
+  async writeSharedFile(item) {
+    const temp = path.join(
+      os.tmpdir(),
+      "codecolab-share-" + item.id + "-" + Date.now()
+    );
+    try {
+      const result = await this.api.downloadAttachment(
+        this.session.publicId,
+        this.sessionToken,
+        item.id,
+        temp
+      );
+      // The server publishes the digest with the list, so a download that
+      // does not match it is discarded rather than written over a good file.
+      if (item.sha256 && result && result.sha256 && result.sha256 !== item.sha256) {
+        throw new Error("the download did not match the published checksum");
+      }
+      const bytes = fs.readFileSync(temp);
+      const changed = await workspace.writeBytes(item.path, bytes);
+      this.syncedShares.set(item.path, item.sha256);
+      return changed;
+    } finally {
+      fs.rm(temp, { force: true }, () => {});
+    }
   }
 
   unshareFile(relativePath) {
@@ -1094,16 +1205,24 @@ class SessionController {
     return this.attachments;
   }
 
-  async attachFile(filePath, fileName, contentType) {
+  /**
+   * @param {string} [workspacePath] Where it belongs in the shared folder.
+   *   Omitted for a loose attachment, which is not a project file at all.
+   */
+  async attachFile(filePath, fileName, contentType, workspacePath) {
     if (!this.session || !this.sessionToken) throw new Error("No session");
     const result = await this.api.uploadAttachment(
       this.session.publicId,
       this.sessionToken,
       filePath,
       fileName,
-      contentType
+      contentType,
+      workspacePath
     );
-    log.info("Attached " + result.name + " (" + result.size + " bytes)");
+    log.info(
+      (workspacePath ? "Shared " + workspacePath : "Attached " + result.name) +
+        " (" + result.size + " bytes)"
+    );
     return result;
   }
 
@@ -1209,6 +1328,7 @@ class SessionController {
     this.attachments = [];
     this.locks = {};
     this.manualIncludes.clear();
+    this.syncedShares.clear();
     this.store.clear();
     this.role = null;
     this.participantId = null;

@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.6.2
+
+- **"Share this one" now means the same thing for every file.** Anything the
+  live sync cannot carry - a PNG, a zip, a 700 KB fixture - used to become an
+  attachment sitting in a list, which is not sharing a project file, it is
+  emailing it. The bytes still travel the other way, because a text channel
+  under a size cap cannot take them, but they now carry the path they belong
+  at and every client writes them there. `codecolab.autoWriteSharedFiles`
+  turns that off if you would rather be asked.
+- The panel separates the two: *Shared project files*, which land in the
+  folder, and *Send a file*, which does not.
+- **Updates are checked on a timer, not only at startup.** A window left
+  open used to check once and then stay quiet for six hours, so a build
+  published five minutes after you opened the editor went unnoticed for the
+  rest of the day. It now looks every fifteen minutes and asks the server at
+  most once an hour.
+- **"Check for updates" is a button in the panel**, next to "Show log". The
+  command still exists; you no longer have to know its name.
+
 ## 2.6.0
 
 - **Share any file, not only text.** "Share this one" on an excluded or

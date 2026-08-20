@@ -22,6 +22,9 @@
  * A silent update also reloads the window by itself, but only when there is
  * no session running: reloading drops the socket, and finishing somebody's
  * pair-programming call to install a patch is not an improvement.
+ *
+ * Activation alone is not enough to call this automatic - a window left open
+ * for a week would check once - so `poll()` keeps looking on a timer.
  */
 
 const fs = require("fs");
@@ -35,7 +38,8 @@ const { request, download } = require("./http");
 
 const LAST_CHECK_KEY = "codecolab.lastUpdateCheck";
 const SKIPPED_KEY = "codecolab.skippedVersion";
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000; // four times a day is plenty
+const CHECK_EVERY_MS = 60 * 60 * 1000; // hourly - a build should not sit unseen all day
+const POLL_EVERY_MS = 15 * 60 * 1000; // how often the timer looks; the throttle above decides
 
 /** "2.10.0" > "2.9.0" - a plain string compare gets this wrong. */
 function isNewer(candidate, current) {
@@ -73,6 +77,22 @@ class Updater {
     this.busy = false;
     this.isBusy =
       hooks && typeof hooks.isBusy === "function" ? hooks.isBusy : () => false;
+  }
+
+  /**
+   * Keep checking while the window is open. The timer is deliberately more
+   * frequent than the throttle: it is what makes a machine that woke from
+   * sleep notice a build, and `check()` still refuses to ask the server more
+   * than once per CHECK_EVERY_MS.
+   *
+   * @returns {vscode.Disposable} stop polling
+   */
+  poll() {
+    const timer = setInterval(() => {
+      this.check().catch((err) => log.info("Update check skipped: " + err.message));
+    }, POLL_EVERY_MS);
+    if (typeof timer.unref === "function") timer.unref();
+    return { dispose: () => clearInterval(timer) };
   }
 
   mode() {
@@ -209,4 +229,4 @@ class Updater {
   }
 }
 
-module.exports = { Updater, isNewer, trustedTransport };
+module.exports = { Updater, isNewer, trustedTransport, CHECK_EVERY_MS, POLL_EVERY_MS };
