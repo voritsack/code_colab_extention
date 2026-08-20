@@ -10,6 +10,7 @@ const STATUS_ICON = {
   pending: "clock",
   active: "broadcast",
   paused: "debug-pause",
+  disconnected: "debug-disconnect",
   ended: "circle-slash",
 };
 
@@ -59,6 +60,25 @@ class SessionTreeProvider {
         "Your role: `" + (c.role || "unknown") + "`"
     );
     nodes.push(title);
+
+    if (c.isDisconnected) {
+      // Offered before the invite details, because it is the only thing
+      // worth doing from here.
+      const retry = new Node("Disconnected - click to reconnect");
+      retry.id = "reconnect";
+      retry.iconPath = new vscode.ThemeIcon(
+        "debug-disconnect",
+        new vscode.ThemeColor("charts.red")
+      );
+      retry.command = { command: "codecolab.reconnect", title: "Reconnect" };
+      if (c.lastError) {
+        retry.description = c.lastError.message;
+        retry.tooltip = new vscode.MarkdownString(
+          "**" + c.lastError.message + "**\n\n" + c.lastError.hint
+        );
+      }
+      nodes.push(retry);
+    }
 
     if (c.isHost && c.session.joinCode) {
       const code = new Node("Code  " + c.session.joinCode);

@@ -378,6 +378,86 @@ async function guestPhase() {
   return true;
 }
 
+/**
+ * What happens when something in front of the server answers the WebSocket
+ * upgrade with plain HTTP - a proxy with WebSockets switched off.
+ *
+ * The session must survive it: losing the invite link and the participant
+ * list over a transport problem is what sends the view back to its welcome
+ * screen while the server still thinks the session is live.
+ */
+async function disconnectPhase() {
+  console.log("\n— proxy without websocket support —");
+  const dir = tempWorkspace("codecolab-offline-");
+  state.workspaceRoot = dir;
+  fs.writeFileSync(path.join(dir, "notes.txt"), "hello\n");
+
+  // Stands in for the proxy: answers every request, upgrade or not, with 404.
+  const http = require("http");
+  const blocker = http.createServer((req, res) => {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end('{"detail":"Not found"}');
+  });
+  await new Promise((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const blockerUrl = "ws://127.0.0.1:" + blocker.address().port;
+
+  const context = makeContext();
+  const auth = new Auth(context);
+  const controller = new SessionController(new Api(auth), auth);
+  await auth.store((await ensureAccount("host")).tokens);
+
+  const session = await controller.startHosting({
+    title: "Offline test",
+    allowGuests: true,
+    requireApproval: true,
+  });
+  await waitFor(() => controller.status === "active", { what: "connected" });
+  const code = session.joinCode;
+  const url = session.joinUrl;
+
+  // Now the proxy stops upgrading.
+  state.settings["codecolab.wsUrl"] = blockerUrl;
+  controller.ws.close();
+
+  await waitFor(() => controller.isDisconnected, {
+    timeout: 15000,
+    what: "controller to report a handshake rejection",
+  });
+
+  check("offline: status is disconnected", controller.status === "disconnected");
+  check("offline: still in a session", controller.inSession === true);
+  check("offline: join code kept", controller.session.joinCode === code, controller.session.joinCode);
+  check("offline: invite link kept", controller.session.joinUrl === url);
+  check(
+    "offline: reports the handshake status, not a generic timeout",
+    Boolean(controller.lastError) &&
+      controller.lastError.message.indexOf("404") !== -1,
+    controller.lastError && controller.lastError.message
+  );
+  check(
+    "offline: hint names the proxy",
+    Boolean(controller.lastError) &&
+      controller.lastError.hint.toLowerCase().indexOf("websocket") !== -1
+  );
+  check("offline: editing is refused while down", controller.canEdit === false);
+
+  // It gave up quickly rather than retrying a hopeless handshake six times.
+  check("offline: did not enter the retry backoff", controller._reconnectTimer === null);
+
+  // Proxy fixed.
+  state.settings["codecolab.wsUrl"] = "";
+  const back = await controller.reconnect();
+  check("offline: reconnect succeeds once the proxy is fixed", back === true);
+  await waitFor(() => controller.status === "active", { what: "back online" });
+  check("offline: back to active", controller.status === "active");
+  check("offline: error cleared", controller.lastError === null);
+  check("offline: same session, not a new one", controller.session.joinCode === code);
+
+  await controller.end();
+  blocker.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function main() {
   console.log("CodeColab extension tests against " + SERVER);
   try {
@@ -390,6 +470,7 @@ async function main() {
   await unitTests();
   await hostPhase();
   await guestPhase();
+  await disconnectPhase();
 
   console.log("\n" + checks + " checks, " + failures.length + " failure(s)");
   if (failures.length) {

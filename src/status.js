@@ -10,6 +10,7 @@ const LABELS = {
   pending: { icon: "$(clock)", text: "waiting to be admitted" },
   active: { icon: "$(broadcast)", text: "live" },
   paused: { icon: "$(debug-pause)", text: "paused" },
+  disconnected: { icon: "$(debug-disconnect)", text: "disconnected" },
   ended: { icon: "$(circle-slash)", text: "ended" },
 };
 
@@ -54,6 +55,18 @@ class StatusBar {
         "Your role: `" + (c.role || "?") + "`" +
         (c.session.joinCode ? "\n\nCode: `" + c.session.joinCode + "`" : "")
     );
+
+    if (c.isDisconnected) {
+      this.item.tooltip = new vscode.MarkdownString(
+        "**Disconnected**\n\n" +
+          (c.lastError ? c.lastError.message + "\n\n" + c.lastError.hint : "") +
+          "\n\nClick to reconnect."
+      );
+      this.item.backgroundColor = new vscode.ThemeColor(
+        "statusBarItem.errorBackground"
+      );
+      return;
+    }
 
     this.item.backgroundColor =
       waiting || c.status === "paused"

@@ -55,6 +55,7 @@ class SessionController {
     this.sessionToken = null;
 
     this.ws = null;
+    this.lastError = null; // { message, hint } while status is "disconnected"
     this._closing = false;
     this._reconnectAttempt = 0;
     this._reconnectTimer = null;
@@ -82,6 +83,10 @@ class SessionController {
     return (
       (this.role === "host" || this.role === "editor") && this.status === "active"
     );
+  }
+
+  get isDisconnected() {
+    return this.status === "disconnected";
   }
 
   changed() {
@@ -206,6 +211,22 @@ class SessionController {
         );
       });
 
+      // Fires when the server answers the upgrade request with an ordinary
+      // HTTP response instead of 101. Listening for it means ws hands us the
+      // status and leaves cleanup to us: no "error" or "close" will follow.
+      socket.on("unexpected-response", (request, response) => {
+        const httpStatus = response.statusCode;
+        response.resume();
+        request.destroy();
+        this.ws = null;
+        this.detachWorkspaceListeners();
+        if (!settled) {
+          settled = true;
+          resolve(false);
+        }
+        this.onHandshakeRejected(httpStatus);
+      });
+
       socket.on("error", (err) => {
         log.error("Socket error: " + err.message);
         if (!settled) {
@@ -238,18 +259,21 @@ class SessionController {
         [CLOSE.REPLACED]: "This session was opened in another window.",
         [CLOSE.UNAUTHORIZED]: "The session rejected your token: " + reason,
       };
+      // These are decisions about your membership, not transport problems:
+      // the session really is over for you, so clearing it is right.
       vscode.window.showWarningMessage("CodeColab: " + messages[code]);
       this.reset();
       return;
     }
 
-    const delay = RECONNECT_DELAYS_MS[Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
+    const delay =
+      RECONNECT_DELAYS_MS[Math.min(this._reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
     this._reconnectAttempt += 1;
     if (this._reconnectAttempt > RECONNECT_DELAYS_MS.length) {
-      vscode.window.showErrorMessage(
-        "CodeColab: lost the connection and could not get it back."
-      );
-      this.reset();
+      this.goOffline({
+        message: "Lost the connection and could not get it back.",
+        hint: "The session is still on the server - reconnect when you are ready.",
+      });
       return;
     }
 
@@ -257,6 +281,115 @@ class SessionController {
     this.changed();
     log.info("Reconnecting in " + delay + "ms (attempt " + this._reconnectAttempt + ")");
     this._reconnectTimer = setTimeout(() => this.connect(), delay);
+  }
+
+  /**
+   * The server answered the upgrade request with plain HTTP.
+   *
+   * Nearly always a proxy that does not forward WebSocket connections, and
+   * retrying will never fix that - so say what is actually wrong instead of
+   * counting down six attempts and reporting "lost the connection".
+   */
+  onHandshakeRejected(httpStatus) {
+    if (this._closing) return;
+
+    log.error("WebSocket handshake rejected with HTTP " + httpStatus);
+
+    if (httpStatus === 401 || httpStatus === 403) {
+      this.goOffline({
+        message: "The server refused this session (HTTP " + httpStatus + ").",
+        hint: "Sign in again, or ask the host for a fresh invite.",
+      });
+      return;
+    }
+
+    if (httpStatus >= 500) {
+      // The origin is having a bad time, and that can pass. Keep retrying.
+      this.onSocketClosed(1006, "server error during handshake");
+      return;
+    }
+
+    this.goOffline({
+      message:
+        "The server would not upgrade the connection to a WebSocket (HTTP " +
+        httpStatus +
+        ").",
+      hint:
+        "Something in front of " +
+        config.wsUrl() +
+        " is not forwarding WebSocket connections. On Cloudflare, turn on " +
+        "Network > WebSockets; on nginx the location needs " +
+        "proxy_http_version 1.1 with the Upgrade and Connection headers. " +
+        "Live editing cannot work until that is fixed.",
+    });
+  }
+
+  /**
+   * Drop the socket but keep the session.
+   *
+   * Clearing it here would throw away the invite link and the participant
+   * list over what is usually a temporary network problem - and the server
+   * would still consider the session live, so there would be nothing to
+   * rejoin with.
+   */
+  goOffline(error) {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    this.detachWorkspaceListeners();
+    if (this.ws) {
+      try {
+        this.ws.removeAllListeners();
+        this.ws.close();
+      } catch (err) {
+        /* already gone */
+      }
+      this.ws = null;
+    }
+
+    this.status = "disconnected";
+    this.lastError = error;
+    this.changed();
+
+    vscode.window
+      .showErrorMessage(
+        "CodeColab: " + error.message + " " + error.hint,
+        "Reconnect",
+        "Show log",
+        "Leave session"
+      )
+      .then((choice) => {
+        if (choice === "Reconnect") {
+          vscode.commands.executeCommand("codecolab.reconnect");
+        } else if (choice === "Show log") {
+          log.show();
+        } else if (choice === "Leave session") {
+          this.reset();
+        }
+      });
+  }
+
+  /** Manual retry after goOffline. */
+  async reconnect() {
+    if (!this.session || !this.sessionToken) {
+      throw new Error("No session to reconnect to.");
+    }
+    this._reconnectAttempt = 0;
+    this._closing = false;
+    this.lastError = null;
+    this.status = "connecting";
+    this.changed();
+
+    const ok = await this.connect();
+    if (!ok && this.status === "connecting") {
+      // connect() gave up without any handler having reported a reason.
+      this.goOffline({
+        message: "Could not reach the session.",
+        hint: "Check the server URL and your network, then try again.",
+      });
+    }
+    return ok;
   }
 
   send(payload) {
@@ -708,6 +841,7 @@ class SessionController {
     this.participantId = null;
     this.sessionToken = null;
     this.status = "idle";
+    this.lastError = null;
     this._lastRemote.clear();
     this._reconnectAttempt = 0;
     this.changed();

@@ -63,6 +63,7 @@ function activate(context) {
   register("codecolab.resumeSession", () => requireHost().resume());
   register("codecolab.endSession", () => endSession());
   register("codecolab.leaveSession", () => leaveSession());
+  register("codecolab.reconnect", () => reconnect());
   register("codecolab.resync", () => controller.resync());
   register("codecolab.pushWorkspace", () => controller.pushWorkspace());
   register("codecolab.approve", (node) => admit(node, "editor"));
@@ -79,6 +80,7 @@ function activate(context) {
   register("codecolab.register", () => auth.register());
   register("codecolab.showLog", () => log.show());
   register("codecolab.showPanelOrStart", () => {
+    if (controller.isDisconnected) return reconnect();
     if (controller.inSession) {
       return vscode.commands.executeCommand("codecolab.sessionView.focus");
     }
@@ -191,6 +193,12 @@ async function startSession() {
     vscode.commands.executeCommand("codecolab.sessionView.focus");
   }
 
+  if (controller.isDisconnected) {
+    // The session exists on the server but the socket never came up. Saying
+    // "live" here would be a lie, and the real reason has already been shown.
+    return session;
+  }
+
   const choice = await vscode.window.showInformationMessage(
     "Session live. The invite link is on your clipboard.",
     { modal: true, detail: "Link: " + session.joinUrl + "\nCode: " + session.joinCode },
@@ -287,7 +295,7 @@ async function joinSession(prefill) {
     vscode.commands.executeCommand("codecolab.sessionView.focus");
   }
 
-  if (result.state === "pending") {
+  if (result.state === "pending" && !controller.isDisconnected) {
     vscode.window.showInformationMessage(
       "Asked " + result.host_name + " to let you in. Hang tight."
     );
@@ -324,6 +332,19 @@ async function confirmWorkspaceOverwrite(preview) {
     "Join and overwrite"
   );
   return choice === "Join and overwrite";
+}
+
+async function reconnect() {
+  if (!controller.inSession) throw new Error("You are not in a session.");
+  const ok = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "CodeColab: reconnecting" },
+    () => controller.reconnect()
+  );
+  if (ok) {
+    vscode.window.showInformationMessage("CodeColab: back in the session.");
+  }
+  // A failure has already been reported with its actual cause.
+  return ok;
 }
 
 async function copyInvite() {

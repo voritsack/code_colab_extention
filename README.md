@@ -42,6 +42,26 @@ editing and view-only, or remove them.
 nothing is stored. Useful for teaching: freeze the picture, talk, then resume.
 Resuming pushes a fresh snapshot so everyone is back in step.
 
+## When the connection drops
+
+Losing the socket does not end your session. The view keeps the invite link
+and the participant list, the status bar turns red, and a **Reconnect** entry
+appears at the top of the view - the session is still on the server, so you
+rejoin the same one rather than starting over.
+
+If the server answers the WebSocket handshake with ordinary HTTP instead of
+upgrading it, that is reported as what it is rather than retried six times and
+given up on. It almost always means a proxy in front of the backend is not
+forwarding WebSocket connections:
+
+- **Cloudflare**: Network -> WebSockets must be on.
+- **nginx**: the location needs `proxy_http_version 1.1;`,
+  `proxy_set_header Upgrade $http_upgrade;` and
+  `proxy_set_header Connection "upgrade";`
+
+Nothing else on the site will look broken - the join page renders and the
+admin dashboard loads - but no session can work until it is fixed.
+
 ## Commands
 
 | Command | Who |
@@ -51,6 +71,7 @@ Resuming pushes a fresh snapshot so everyone is back in step.
 | Copy invite link · Copy join code | host |
 | Pause · Resume · End session | host |
 | Push current workspace to everyone | host |
+| Reconnect to session | anyone, after a drop |
 | Resynchronise from host · Leave session | participant |
 | Sign in · Sign out · Create an account | anyone |
 | Show log | anyone |
@@ -105,7 +126,7 @@ names, so that decision is always yours.
 ```bash
 npm install
 npm run package          # produces codecolab-<version>.vsix
-code --install-extension codecolab-1.2.0.vsix
+code --install-extension codecolab-1.3.0.vsix
 ```
 
 If the old `blogapp-sync` extension is still installed, uninstall it — this is

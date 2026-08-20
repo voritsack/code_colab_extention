@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
   "description": "Share the folder you already have open. Generate a link, admit people one at a time, and code together — for teaching or for pairing.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -133,6 +133,12 @@
         "icon": "$(sign-out)"
       },
       {
+        "command": "codecolab.reconnect",
+        "title": "Reconnect to session",
+        "category": "CodeColab",
+        "icon": "$(debug-disconnect)"
+      },
+      {
         "command": "codecolab.resync",
         "title": "Resynchronise from host",
         "category": "CodeColab",
@@ -225,13 +231,18 @@
     "menus": {
       "view/title": [
         {
+          "command": "codecolab.reconnect",
+          "when": "view == codecolab.sessionView && codecolab.status == disconnected",
+          "group": "navigation@0"
+        },
+        {
           "command": "codecolab.copyInvite",
           "when": "view == codecolab.sessionView && codecolab.isHost",
           "group": "navigation@1"
         },
         {
           "command": "codecolab.pauseSession",
-          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == active",
+          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == active && codecolab.status != disconnected",
           "group": "navigation@2"
         },
         {
@@ -241,12 +252,12 @@
         },
         {
           "command": "codecolab.resync",
-          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost",
+          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost && codecolab.status != disconnected",
           "group": "navigation@3"
         },
         {
           "command": "codecolab.pushWorkspace",
-          "when": "view == codecolab.sessionView && codecolab.isHost",
+          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status != disconnected",
           "group": "navigation@3"
         },
         {
@@ -348,6 +359,10 @@
         },
         {
           "command": "codecolab.resync",
+          "when": "codecolab.inSession"
+        },
+        {
+          "command": "codecolab.reconnect",
           "when": "codecolab.inSession"
         }
       ]
