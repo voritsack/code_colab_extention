@@ -2,6 +2,23 @@
 
 Everything in the code is ready. Three things are left, and they all need you.
 
+## The list
+
+- [ ] Create publisher **`voritsack`** at <https://marketplace.visualstudio.com/manage>
+- [ ] Create a token at <https://dev.azure.com> — **All accessible organizations**, scope **Marketplace → Manage**
+- [ ] `cd VScode-ex`
+- [ ] `npx @vscode/vsce login voritsack` — paste the token
+- [ ] `npm run publish:marketplace`
+- [ ] In the hosting panel, set `VSCODE_EXTENSION_ID=voritsack.codecolab` in `.env` and restart
+- [ ] Check `curl -s https://code-colab.renode.space/api/info` says `voritsack.codecolab`
+
+Optional:
+
+- [ ] Make the GitHub repo public, or delete `repository` from `package.json`
+- [ ] Publish to Open VSX for Cursor and VSCodium users
+
+The rest of this file explains each line.
+
 ---
 
 ## 1. Create the publisher
