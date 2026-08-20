@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.0
+
+- **Share any file, not only text.** "Share this one" on an excluded or
+  oversized file used to refuse anything binary. It now sends those as an
+  attachment instead: text still joins the live sync, everything else is
+  handed round without being mangled by a UTF-8 round trip.
+- **Automatic updates are on by default again**, and finish by themselves.
+  A silent update installs in the background and reloads the window as soon
+  as no session is running - never under one in progress. Still only from
+  the configured server, still only over https or localhost, and still only
+  if the download matches the published digest.
+- The server's admin dashboard gained the other half of this: publish a
+  build from the browser, and see the two URLs the extension talks to.
+
 ## 2.2.0
 
 - First Marketplace release. The extension id is now `voritsack.codecolab`,

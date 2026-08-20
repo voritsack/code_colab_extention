@@ -18,6 +18,10 @@
  *   3. The download must match the digest the manifest advertised.
  *
  * `codecolab.autoUpdate` chooses between "silent", "ask" and "off".
+ *
+ * A silent update also reloads the window by itself, but only when there is
+ * no session running: reloading drops the socket, and finishing somebody's
+ * pair-programming call to install a patch is not an improvement.
  */
 
 const fs = require("fs");
@@ -57,12 +61,18 @@ function trustedTransport(url) {
 }
 
 class Updater {
-  /** @param {vscode.ExtensionContext} context */
-  constructor(context) {
+  /**
+   * @param {vscode.ExtensionContext} context
+   * @param {{isBusy?: () => boolean}} [hooks] `isBusy` tells the updater not
+   *   to reload the window on its own - there is a session in progress.
+   */
+  constructor(context, hooks) {
     this.context = context;
     this.currentVersion =
       (context.extension && context.extension.packageJSON.version) || "0.0.0";
     this.busy = false;
+    this.isBusy =
+      hooks && typeof hooks.isBusy === "function" ? hooks.isBusy : () => false;
   }
 
   mode() {
@@ -160,10 +170,24 @@ class Updater {
       );
       log.info("Installed CodeColab " + manifest.version);
 
-      // The new code cannot run until the window reloads, and reloading
-      // without asking would throw away whatever they were doing.
+      // The new code cannot run until the window reloads. A silent update
+      // does that itself - that is the point of it - but never while a
+      // session is running, because the reload would drop everyone.
+      if (silent && !this.isBusy()) {
+        vscode.window.setStatusBarMessage(
+          "$(check) CodeColab updated to " + manifest.version,
+          6000
+        );
+        await vscode.commands.executeCommand("workbench.action.reloadWindow");
+        return manifest.version;
+      }
+
       const choice = await vscode.window.showInformationMessage(
-        "CodeColab updated to " + manifest.version + ". Reload to start using it.",
+        "CodeColab updated to " +
+          manifest.version +
+          (silent
+            ? ". It starts working when this window reloads - your session is safe until then."
+            : ". Reload to start using it."),
         "Reload now",
         "Later"
       );

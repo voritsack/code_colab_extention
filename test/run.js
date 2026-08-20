@@ -32,7 +32,7 @@ const { SessionController } = require("../src/session");
 const { SessionPanel } = require("../src/panel");
 const wsFiles = require("../src/workspace");
 const { PresenceView } = require("../src/presence");
-const { isNewer, trustedTransport } = require("../src/updater");
+const { Updater, isNewer, trustedTransport } = require("../src/updater");
 const { colorFor, initials } = require("../src/colors");
 const { normalizeCode } = require("../src/code");
 const paths = require("../src/paths");
@@ -747,14 +747,22 @@ async function transferPhase() {
   controller.unshareFile("debug.log");
   check("share: can be revoked", !controller.manualIncludes.has("debug.log"));
 
-  // ---- a binary file is refused, and told where to go instead -------------
-  let refusal = "";
-  try {
-    await controller.shareFile("diagram.png");
-  } catch (err) {
-    refusal = err.message;
-  }
-  check("share: refuses a binary file", refusal.indexOf("attachment") !== -1, refusal);
+  // ---- a binary file goes out as an attachment instead of the text sync ---
+  guest.frames.length = 0;
+  const routed = await controller.shareFile("diagram.png");
+  check("share: binary file routed to attachments",
+    routed && routed.mode === "attachment", JSON.stringify(routed || null));
+  check("share: binary file kept out of the text sync",
+    !guest.frames.some((f) => f.type === "file_update" && f.path === "diagram.png"));
+  check("share: binary file not added to the manual includes",
+    !controller.manualIncludes.has("diagram.png"));
+  check("share: attachment carries the file's bytes",
+    routed.attachment && routed.attachment.size === picture.length,
+    String(routed.attachment && routed.attachment.size));
+  check("share: attachment keeps the name",
+    routed.attachment.name === "diagram.png", String(routed.attachment.name));
+  await controller.detachAttachment(routed.attachment.id);
+  await controller.refreshAttachments();
 
   // ---- attachments --------------------------------------------------------
   const sent = await controller.attachFile(
@@ -800,6 +808,87 @@ async function transferPhase() {
   fs.rmSync(inbox, { recursive: true, force: true });
 }
 
+async function updatePhase() {
+  console.log("\n- pulling an update from the server -");
+
+  // What the extension actually polls. Nothing is published on a bare
+  // server, and there is nothing to test in that case.
+  let manifest;
+  try {
+    manifest = await request(SERVER + "/api/extension/latest", { timeoutMs: 5000 });
+  } catch (err) {
+    console.log("[SKIP] update - the manifest is not reachable (" + err.message + ")");
+    return;
+  }
+  if (!manifest || !manifest.available) {
+    console.log("[SKIP] update - no build is published on " + SERVER);
+    return;
+  }
+
+  check("update: the manifest advertises a version", Boolean(manifest.version), String(manifest.version));
+  check("update: it carries a digest to check the download against",
+    /^[0-9a-f]{64}$/.test(manifest.sha256 || ""), String(manifest.sha256));
+  check("update: the download link points at this server",
+    String(manifest.url).indexOf(SERVER) === 0, String(manifest.url));
+
+  function updaterContext(version) {
+    const context = makeContext();
+    context.extension = { packageJSON: { version } };
+    return context;
+  }
+
+  // Already current: nothing is downloaded and nothing is installed.
+  state.settings["codecolab.autoUpdate"] = "silent";
+  state.executed.length = 0;
+  const current = new Updater(updaterContext(manifest.version));
+  check("update: an up-to-date extension installs nothing",
+    (await current.check()) === null &&
+      !state.executed.some((c) => c[0] === "workbench.extensions.installExtension"));
+
+  // Behind, and nothing is going on: install it and reload without asking.
+  state.executed.length = 0;
+  state.messages.length = 0;
+  const idle = new Updater(updaterContext("0.0.1"), { isBusy: () => false });
+  const installed = await idle.check();
+  check("update: a stale extension pulls the published build",
+    installed === manifest.version, String(installed));
+  check("update: it is installed from a local file",
+    state.executed.some((c) => c[0] === "workbench.extensions.installExtension"));
+  check("update: an idle window reloads itself",
+    state.executed.some((c) => c[0] === "workbench.action.reloadWindow"));
+  check("update: silently, without a prompt",
+    !state.messages.some((m) => m[0] === "info"),
+    JSON.stringify(state.messages));
+
+  // Behind, but mid-session: install it, and leave the reload to them.
+  state.executed.length = 0;
+  state.messages.length = 0;
+  const busy = new Updater(updaterContext("0.0.1"), { isBusy: () => true });
+  check("update: a session still gets the new build",
+    (await busy.check()) === manifest.version);
+  check("update: but the window is not reloaded under it",
+    !state.executed.some((c) => c[0] === "workbench.action.reloadWindow"));
+  check("update: the reload is offered instead",
+    state.messages.some((m) => m[0] === "info" && m[1].indexOf("session is safe") !== -1),
+    JSON.stringify(state.messages));
+
+  // A digest that does not match is the one case where the install is
+  // abandoned: the bytes are not what the server said they would be.
+  state.executed.length = 0;
+  const tampered = new Updater(updaterContext("0.0.1"));
+  const refused = await tampered.install(
+    Object.assign({}, manifest, { sha256: "0".repeat(64) }),
+    { silent: false }
+  );
+  check("update: a mismatched digest is refused", refused === null);
+  check("update: and nothing is installed",
+    !state.executed.some((c) => c[0] === "workbench.extensions.installExtension"));
+
+  state.settings["codecolab.autoUpdate"] = "off";
+  const disabled = new Updater(updaterContext("0.0.1"));
+  check("update: off means off", (await disabled.check()) === null);
+}
+
 async function main() {
   console.log("CodeColab extension tests against " + SERVER);
   try {
@@ -814,6 +903,7 @@ async function main() {
   await guestPhase();
   await extrasPhase();
   await transferPhase();
+  await updatePhase();
   await disconnectPhase();
 
   console.log("\n" + checks + " checks, " + failures.length + " failure(s)");

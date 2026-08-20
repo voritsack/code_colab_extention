@@ -19,6 +19,7 @@ const state = {
   messages: [],
   contexts: {},
   clipboard: "",
+  executed: [], // every commands.executeCommand call, for assertions
   documents: new Map(), // fsPath -> { text }
   editors: [], // fake visible editors
   decorations: [], // every setDecorations call, for assertions
@@ -306,6 +307,7 @@ const vscode = {
 
   commands: {
     async executeCommand(name, key, value) {
+      state.executed.push([name, key]);
       if (name === "setContext") state.contexts[key] = value;
       return undefined;
     },

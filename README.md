@@ -129,7 +129,10 @@ admin dashboard loads - but no session can work until it is fixed.
 | `codecolab.autoOpenPanel` | `true` | Reveal the view when a session starts. |
 | `codecolab.autoUpdate` | `silent` | `silent`, `ask` or `off`. See below. |
 
-Binary files are skipped automatically.
+Binary files are skipped by the automatic sync, because whole-file
+text sync would mangle them. Sharing one by hand still works: pick it
+in the file search and it is sent as an attachment instead, which
+everyone can save from the panel.
 
 ## Security
 
@@ -172,7 +175,9 @@ editing — it is a guarantee that nothing disappears.
 ## Updates
 
 The server hosts the extension build, and by default new versions install
-themselves and then offer to reload.
+themselves in the background. The window reloads on its own once no session
+is running - never under one in progress, where a reload would drop everyone
+you are working with. Mid-session, the update waits and offers the reload.
 
 Installing a VSIX runs the code inside it, so three rules hold regardless of
 that setting: it only ever comes from the server in `codecolab.serverUrl`

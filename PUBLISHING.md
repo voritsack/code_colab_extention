@@ -141,12 +141,17 @@ stopped opening. Then redeploy the backend and update its `.env` as in
 
 ## Updates after publishing
 
-`codecolab.autoUpdate` is off by default, which is right for a Marketplace
-install: VS Code keeps it current on its own, and two updaters installing over
-each other is worse than none.
+`codecolab.autoUpdate` defaults to `silent`, which is right for a sideloaded
+install: the server hands out the build and the extension keeps itself
+current without anyone chasing a `.vsix`.
 
-Only turn it on (`silent` or `ask`) if you hand people the `.vsix` directly
-instead.
+Tell Marketplace users to set it to `off`. VS Code already keeps that install
+current, and two updaters installing over each other is worse than none.
+
+Publishing a build to the self-hosted server is either
+`python scripts/publish_extension.py <file.vsix> --notes "..."` or the
+dashboard's **Extension** page, which takes the upload in the browser and
+shows the two URLs clients talk to.
 
 ---
 

@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "voritsack",
   "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -117,12 +117,12 @@
             "off"
           ],
           "enumDescriptions": [
-            "Download and install new versions automatically, then offer to reload. Only ever from the configured server, and only over https (or localhost) — on a plain-http server this falls back to asking.",
+            "Download and install new versions in the background, then reload the window as soon as no session is running. Only ever from the configured server, and only over https (or localhost) — on a plain-http server this falls back to asking.",
             "Tell you a new version is available and let you decide.",
             "Never check."
           ],
-          "default": "off",
-          "markdownDescription": "How to handle builds published by `#codecolab.serverUrl#`. Leave this off if you installed from the Marketplace — VS Code already keeps the extension current, and both updating at once means two sources installing over each other. Set it to `silent` or `ask` only if you sideloaded the VSIX."
+          "default": "silent",
+          "markdownDescription": "How to handle builds published by `#codecolab.serverUrl#`. `silent` installs them in the background and reloads the window once no session is running. Set this to `off` if you installed from the Marketplace — VS Code already keeps the extension current, and both updating at once means two sources installing over each other."
         }
       }
     },

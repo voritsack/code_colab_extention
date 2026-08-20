@@ -58,7 +58,9 @@ function activate(context) {
     vscode.Uri.joinPath(context.extensionUri, "media")
   );
   presence = new PresenceView(controller);
-  updater = new Updater(context);
+  // A silent update reloads the window when it is done, so it has to know
+  // whether that would interrupt anything.
+  updater = new Updater(context, { isBusy: () => controller.inSession });
 
   const status = new StatusBar(controller);
 
@@ -397,7 +399,7 @@ async function attachFiles() {
         const name = path.basename(uri.fsPath);
         progress.report({ message: name });
         try {
-          await controller.attachFile(uri.fsPath, name, lookupType(name));
+          await controller.attachFile(uri.fsPath, name, workspace.contentTypeFor(name));
           done += 1;
         } catch (err) {
           // One rejected file should not abandon the rest of the batch.
@@ -416,31 +418,6 @@ async function attachFiles() {
     }
   );
   await controller.refreshAttachments();
-}
-
-/** A content type good enough for the browser saving it later. */
-function lookupType(name) {
-  const ext = path.extname(name).toLowerCase();
-  const known = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".pdf": "application/pdf",
-    ".zip": "application/zip",
-    ".txt": "text/plain",
-    ".md": "text/markdown",
-    ".json": "application/json",
-    ".csv": "text/csv",
-    ".mp4": "video/mp4",
-    ".mp3": "audio/mpeg",
-    ".docx":
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  };
-  return known[ext] || "application/octet-stream";
 }
 
 async function chooseFolder(title) {
@@ -533,8 +510,18 @@ async function searchFiles(query) {
 
 async function shareFile(relativePath) {
   requireSession();
-  await controller.shareFile(relativePath);
-  vscode.window.setStatusBarMessage("$(check) Sharing " + relativePath, 4000);
+  const result = await controller.shareFile(relativePath);
+  if (result && result.mode === "attachment") {
+    // Not text, so it went out as an attachment rather than joining the sync.
+    vscode.window.setStatusBarMessage("$(check) Sent " + relativePath, 4000);
+    vscode.window.showInformationMessage(
+      "CodeColab: " +
+        relativePath +
+        " is not a text file, so it was sent as an attachment."
+    );
+  } else {
+    vscode.window.setStatusBarMessage("$(check) Sharing " + relativePath, 4000);
+  }
   await searchFiles(undefined);
 }
 

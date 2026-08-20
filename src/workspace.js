@@ -296,6 +296,33 @@ async function listCandidates(query, { limit = 400 } = {}) {
   return out;
 }
 
+/** A content type good enough for the browser saving it later. */
+const CONTENT_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".json": "application/json",
+  ".csv": "text/csv",
+  ".mp4": "video/mp4",
+  ".mp3": "audio/mpeg",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+function contentTypeFor(name) {
+  const dot = String(name || "").lastIndexOf(".");
+  const ext = dot === -1 ? "" : String(name).slice(dot).toLowerCase();
+  return CONTENT_TYPES[ext] || "application/octet-stream";
+}
+
 /** Read one file for a manual share. Returns null if it is not text. */
 async function readTextFile(relativePath) {
   const uri = resolve(relativePath);
@@ -308,6 +335,7 @@ async function readTextFile(relativePath) {
 module.exports = {
   listCandidates,
   readTextFile,
+  contentTypeFor,
   rootFolder,
   rootName,
   relativePathOf,

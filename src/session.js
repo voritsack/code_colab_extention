@@ -1033,8 +1033,11 @@ class SessionController {
   /**
    * Push a file the exclude list or the size limit left out.
    *
-   * Text only. A binary file has no business in a text sync - it would be
-   * mangled on the way through - so those go via attachments instead.
+   * Any type goes. Text joins the live sync; a binary file has no business in
+   * a text channel - it would be mangled on the way through - so it is sent
+   * as an attachment instead of being refused.
+   *
+   * @returns {Promise<{path: string, mode: "sync"|"attachment", attachment?: object}>}
    */
   async shareFile(relativePath) {
     if (this.status === "paused") {
@@ -1048,15 +1051,30 @@ class SessionController {
     }
     const content = await workspace.readTextFile(relativePath);
     if (content === null) {
-      throw new Error(
-        relativePath + " is not a text file. Send it as an attachment instead."
-      );
+      const attachment = await this.attachBinaryFile(relativePath);
+      return { path: relativePath, mode: "attachment", attachment };
     }
     this.manualIncludes.add(relativePath);
     this.send({ type: "file_update", path: relativePath, content });
     log.info("Manually shared " + relativePath);
     this.changed();
-    return true;
+    return { path: relativePath, mode: "sync" };
+  }
+
+  /** Send a workspace file that cannot survive the text sync as an attachment. */
+  async attachBinaryFile(relativePath) {
+    const uri = workspace.resolve(relativePath);
+    if (!uri) {
+      throw new Error(relativePath + " is outside the shared folder.");
+    }
+    const name = relativePath.split("/").pop();
+    const attachment = await this.attachFile(
+      uri.fsPath,
+      name,
+      workspace.contentTypeFor(name)
+    );
+    await this.refreshAttachments();
+    return attachment;
   }
 
   unshareFile(relativePath) {
