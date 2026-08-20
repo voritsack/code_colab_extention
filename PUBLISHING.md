@@ -86,7 +86,7 @@ publish can sit in Microsoft's verification for longer.
 
 The "Open in VS Code" button on the join page opens
 `vscode://<publisher>.<name>/join?code=…`. Right now that is
-`vscode://local.codecolab/join`. The moment the publisher changes, every link
+`vscode://voritsack.codecolab/join`. The moment the publisher changes, every link
 the backend generates points at an extension ID that no longer exists — and
 it fails **silently**: the browser just does nothing.
 
