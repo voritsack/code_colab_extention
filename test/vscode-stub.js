@@ -20,6 +20,8 @@ const state = {
   contexts: {},
   clipboard: "",
   documents: new Map(), // fsPath -> { text }
+  editors: [], // fake visible editors
+  decorations: [], // every setDecorations call, for assertions
 };
 
 // --- events ---------------------------------------------------------------
@@ -41,6 +43,7 @@ class EventEmitter {
 }
 
 const emitters = {
+  visibleEditors: new EventEmitter(),
   changeText: new EventEmitter(),
   saveText: new EventEmitter(),
   createFiles: new EventEmitter(),
@@ -122,9 +125,38 @@ class TextDocument {
   positionAt(offset) {
     return { offset };
   }
+  get lineCount() {
+    return this._text.split(/\r?\n/).length;
+  }
+  lineAt(line) {
+    return { text: this._text.split(/\r?\n/)[line] || "" };
+  }
   setText(text) {
     this._text = text;
   }
+}
+
+function makeEditor(document) {
+  const editor = {
+    document,
+    selection: new vscode.Selection(
+      new vscode.Position(0, 0),
+      new vscode.Position(0, 0)
+    ),
+    setDecorations(type, ranges) {
+      state.decorations.push({ type, ranges, path: document.uri.fsPath });
+    },
+    revealRange() {},
+  };
+  return editor;
+}
+
+function showEditorFor(fsPath, text) {
+  const document = openDocument(fsPath, text);
+  const editor = makeEditor(document);
+  state.editors = [editor];
+  emitters.visibleEditors.fire(state.editors);
+  return editor;
 }
 
 function openDocument(fsPath, text) {
@@ -213,6 +245,9 @@ const vscode = {
       this.line = line;
       this.character = character;
     }
+    isEqual(other) {
+      return this.line === other.line && this.character === other.character;
+    }
   },
   RelativePattern: class RelativePattern {
     constructor(base, pattern) {
@@ -229,6 +264,28 @@ const vscode = {
     }
   },
   StatusBarAlignment: { Left: 1, Right: 2 },
+  DecorationRangeBehavior: {
+    OpenOpen: 0,
+    ClosedClosed: 1,
+    OpenClosed: 2,
+    ClosedOpen: 3,
+  },
+  TextEditorRevealType: {
+    Default: 0,
+    InCenter: 1,
+    InCenterIfOutsideViewport: 2,
+    AtTop: 3,
+  },
+  Selection: class Selection {
+    constructor(anchor, active) {
+      this.anchor = anchor;
+      this.active = active;
+      this.start = anchor;
+      this.end = active;
+      this.isEmpty =
+        anchor.line === active.line && anchor.character === active.character;
+    }
+  },
 
   env: {
     clipboard: {
@@ -306,6 +363,32 @@ const vscode = {
     },
     onDidChangeActiveTextEditor: emitters.activeEditor.event,
     onDidChangeTextEditorSelection: emitters.selection.event,
+    onDidChangeVisibleTextEditors: emitters.visibleEditors.event,
+    get visibleTextEditors() {
+      return state.editors;
+    },
+    createTextEditorDecorationType(options) {
+      const type = {
+        id: Symbol("decoration"),
+        options,
+        disposed: false,
+        dispose() {
+          this.disposed = true;
+        },
+      };
+      return type;
+    },
+    async showTextDocument(document) {
+      const editor = makeEditor(document);
+      if (!state.editors.some((e) => e.document === document)) {
+        state.editors.push(editor);
+      }
+      state.lastShown = document;
+      return editor;
+    },
+    registerWebviewViewProvider() {
+      return { dispose() {} };
+    },
   },
 
   workspace: {
@@ -337,6 +420,14 @@ const vscode = {
         .filter((rel) => !excludeRe.some((re) => re.test(rel)))
         .slice(0, max || 5000);
       return files.map((rel) => Uri.file(nodePath.join(state.workspaceRoot, rel)));
+    },
+    async openTextDocument(uri) {
+      const existing = state.documents.get(uri.fsPath);
+      if (existing) return existing;
+      const text = fs.existsSync(uri.fsPath)
+        ? fs.readFileSync(uri.fsPath, "utf8")
+        : "";
+      return openDocument(uri.fsPath, text);
     },
     async applyEdit(edit) {
       for (const item of edit.edits) {
@@ -391,4 +482,13 @@ function install() {
   };
 }
 
-module.exports = { vscode, state, emitters, install, openDocument, TextDocument };
+module.exports = {
+  vscode,
+  state,
+  emitters,
+  install,
+  openDocument,
+  makeEditor,
+  showEditorFor,
+  TextDocument,
+};

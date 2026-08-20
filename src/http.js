@@ -121,4 +121,66 @@ function request(url, options = {}) {
   });
 }
 
-module.exports = { request, HttpError };
+/**
+ * Stream a URL to a file, returning the sha256 of what actually arrived.
+ *
+ * Used to fetch extension builds, so the caller can check the digest before
+ * doing anything with the file.
+ */
+function download(url, destination, { timeoutMs = 120000, maxBytes = 64 * 1024 * 1024 } = {}) {
+  const fs = require("fs");
+  const crypto = require("crypto");
+
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      reject(new Error("Invalid URL: " + url));
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      reject(new Error("Only http and https are supported"));
+      return;
+    }
+
+    const client = parsed.protocol === "https:" ? https : http;
+    const req = client.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        download(new URL(res.headers.location, url).toString(), destination, {
+          timeoutMs,
+          maxBytes,
+        }).then(resolve, reject);
+        return;
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new HttpError(res.statusCode, "", url));
+        return;
+      }
+
+      const hash = crypto.createHash("sha256");
+      const file = fs.createWriteStream(destination);
+      let size = 0;
+
+      res.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > maxBytes) {
+          req.destroy(new Error("Download too large"));
+          return;
+        }
+        hash.update(chunk);
+      });
+      res.pipe(file);
+      file.on("finish", () => file.close(() => resolve({ sha256: hash.digest("hex"), size })));
+      file.on("error", reject);
+      res.on("error", reject);
+    });
+
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("Download timed out")));
+    req.on("error", reject);
+  });
+}
+
+module.exports = { request, download, HttpError };

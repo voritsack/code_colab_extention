@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
   "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -80,6 +80,21 @@
           "type": "boolean",
           "default": true,
           "description": "Reveal the CodeColab view when a session starts."
+        },
+        "codecolab.autoUpdate": {
+          "type": "string",
+          "enum": [
+            "silent",
+            "ask",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Download and install new versions automatically, then offer to reload. Only ever from the configured server, and only over https (or localhost) — on a plain-http server this falls back to asking.",
+            "Tell you a new version is available and let you decide.",
+            "Never check."
+          ],
+          "default": "silent",
+          "markdownDescription": "How to handle new versions published by `#codecolab.serverUrl#`."
         }
       }
     },
@@ -167,6 +182,18 @@
         "title": "Open the CodeColab panel",
         "category": "CodeColab",
         "icon": "$(window)"
+      },
+      {
+        "command": "codecolab.checkForUpdates",
+        "title": "Check for updates",
+        "category": "CodeColab",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "codecolab.rejoinSession",
+        "title": "Rejoin the previous session",
+        "category": "CodeColab",
+        "icon": "$(debug-restart)"
       }
     ],
     "viewsContainers": {
@@ -209,6 +236,11 @@
           "command": "codecolab.showLog",
           "when": "view == codecolab.sessionView",
           "group": "overflow@2"
+        },
+        {
+          "command": "codecolab.checkForUpdates",
+          "when": "view == codecolab.sessionView",
+          "group": "overflow@3"
         }
       ],
       "commandPalette": [
@@ -265,5 +297,6 @@
   "devDependencies": {
     "@types/vscode": "^1.80.0",
     "eslint": "^8.57.0"
-  }
+  },
+  "icon": "media/logo.png"
 }

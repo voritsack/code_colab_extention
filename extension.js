@@ -20,12 +20,18 @@ const { Api } = require("./src/api");
 const { Identity } = require("./src/identity");
 const { SessionController } = require("./src/session");
 const { SessionPanel } = require("./src/panel");
+const { PresenceView } = require("./src/presence");
 const { StatusBar } = require("./src/status");
+const { Updater } = require("./src/updater");
 const { normalizeCode } = require("./src/code");
+
+const SESSION_KEY = "codecolab.session";
 
 let controller = null;
 let identity = null;
 let panel = null;
+let presence = null;
+let updater = null;
 let api = null;
 
 function activate(context) {
@@ -33,10 +39,33 @@ function activate(context) {
 
   api = new Api();
   identity = new Identity(context);
-  controller = new SessionController(api);
-  panel = new SessionPanel(controller, identity, handleIntent);
+
+  // Remembered per window: a session belongs to the folder that is open, so
+  // reloading the window should walk back into it rather than orphan it.
+  const store = {
+    read: () => context.workspaceState.get(SESSION_KEY) || null,
+    write: (value) => context.workspaceState.update(SESSION_KEY, value),
+    clear: () => context.workspaceState.update(SESSION_KEY, undefined),
+  };
+
+  controller = new SessionController(api, store);
+  panel = new SessionPanel(
+    controller,
+    identity,
+    handleIntent,
+    vscode.Uri.joinPath(context.extensionUri, "media")
+  );
+  presence = new PresenceView(controller);
+  updater = new Updater(context);
 
   const status = new StatusBar(controller);
+
+  context.subscriptions.push(
+    controller.onDidChangePresence((event) =>
+      presence.update(event.participantId, event.presence)
+    ),
+    presence.onDidChange(() => panel.setFollowing(presence.following))
+  );
 
   vscode.commands.executeCommand("setContext", "codecolab.inSession", false);
   vscode.commands.executeCommand("setContext", "codecolab.isHost", false);
@@ -60,6 +89,8 @@ function activate(context) {
   register("codecolab.setName", () => changeName());
   register("codecolab.showLog", () => log.show());
   register("codecolab.showPanel", () => panel.reveal());
+  register("codecolab.checkForUpdates", () => updater.check({ force: true }));
+  register("codecolab.rejoinSession", () => restoreSession({ announce: true }));
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("codecolab.sessionView", panel, {
@@ -68,9 +99,36 @@ function activate(context) {
     vscode.window.registerUriHandler({ handleUri: (uri) => handleUri(uri) }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => panel.render()),
     status,
+    presence,
     controller,
     { dispose: () => log.dispose() }
   );
+
+  // Neither of these should hold up activation.
+  restoreSession({ announce: false }).catch((err) =>
+    log.warn("Could not restore the previous session: " + (err && err.message))
+  );
+  updater.check().catch((err) => log.info("Update check skipped: " + (err && err.message)));
+}
+
+/**
+ * Walk back into the session this window was in before it was reloaded.
+ * Without this a restart orphans the session: it stays live on the server
+ * with nobody able to control it.
+ */
+async function restoreSession({ announce }) {
+  if (controller.inSession) {
+    if (announce) panel.reveal();
+    return null;
+  }
+  const session = await controller.restore();
+  if (session) {
+    log.info("Rejoined " + session.title);
+    vscode.window.setStatusBarMessage("$(broadcast) Rejoined " + session.title, 5000);
+  } else if (announce) {
+    vscode.window.showInformationMessage("CodeColab: no previous session to rejoin.");
+  }
+  return session;
 }
 
 function run(name, handler, args) {
@@ -111,6 +169,11 @@ async function handleIntent(message) {
     push: () => pushWorkspace(),
     resync: () => controller.resync(),
     reconnect: () => reconnect(),
+    follow: () => presence.follow(message.id),
+    chat: () => controller.sendChat(message.text),
+    draw: () => controller.sendStroke(message.stroke),
+    boardClear: () => controller.clearBoard(message.scope),
+    requestEdit: () => controller.requestEdit(),
     approve: () => host().approve(message.id, message.role),
     deny: () => host().deny(message.id),
     role: () => host().setRole(message.id, message.role),

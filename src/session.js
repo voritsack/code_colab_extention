@@ -48,13 +48,22 @@ const HEARTBEAT_TIMEOUT_MS = 70000;
 class SessionController {
   /**
    * @param {import("./api").Api} api
+   * @param {{read: Function, write: Function, clear: Function}} [store]
+   *   Somewhere to remember the session across a window reload. Without it
+   *   the session is lost on restart while the server still thinks it is live.
    */
-  constructor(api) {
+  constructor(api, store) {
     this.api = api;
+    this.store = store || { read: () => null, write: () => {}, clear: () => {} };
     this.clientId = "vscode-" + Math.random().toString(36).slice(2, 11);
 
     this.session = null; // { publicId, title, joinCode, joinUrl, ... }
     this.participants = [];
+    /** @type {Map<number, {path: string|null, line: number, column: number, selection: object|null, displayName: string}>} */
+    this.presence = new Map();
+    this.chat = [];
+    this.board = [];
+    this.locks = {}; // relative path -> participant id holding it
     this.status = "idle"; // idle | connecting | active | paused | pending | ended
     this.role = null;
     this.participantId = null;
@@ -75,6 +84,11 @@ class SessionController {
 
     this._onDidChange = new vscode.EventEmitter();
     this.onDidChange = this._onDidChange.event;
+
+    // Cursors move far more often than anything else in the roster, so they
+    // get their own event and do not force a whole panel re-render.
+    this._onDidChangePresence = new vscode.EventEmitter();
+    this.onDidChangePresence = this._onDidChangePresence.event;
   }
 
   // -- state ------------------------------------------------------------
@@ -95,6 +109,57 @@ class SessionController {
 
   get isDisconnected() {
     return this.status === "disconnected";
+  }
+
+  /** Remember enough to walk back into this session after a reload. */
+  persist() {
+    if (!this.session || !this.sessionToken) {
+      this.store.clear();
+      return;
+    }
+    this.store.write({
+      publicId: this.session.publicId,
+      title: this.session.title,
+      joinCode: this.session.joinCode,
+      joinUrl: this.session.joinUrl,
+      hostName: this.session.hostName,
+      sessionToken: this.sessionToken,
+      participantId: this.participantId,
+      role: this.role,
+      savedAt: Date.now(),
+    });
+  }
+
+  /**
+   * Rejoin the session this window was in before it was reloaded.
+   * Returns the session, or null if there was nothing to go back to.
+   */
+  async restore() {
+    const saved = this.store.read();
+    if (!saved || !saved.sessionToken || !saved.publicId) return null;
+    if (this.inSession) return null;
+
+    this.session = {
+      publicId: saved.publicId,
+      title: saved.title,
+      joinCode: saved.joinCode,
+      joinUrl: saved.joinUrl,
+      hostName: saved.hostName,
+    };
+    this.role = saved.role;
+    this.participantId = saved.participantId;
+    this.sessionToken = saved.sessionToken;
+    this.status = "connecting";
+    this.changed();
+
+    const ok = await this.connect();
+    if (!ok && !this.isDisconnected) {
+      // The token has expired or the session is gone; do not leave a dead
+      // session sitting in the view.
+      this.reset();
+      return null;
+    }
+    return this.session;
   }
 
   changed() {
@@ -139,6 +204,7 @@ class SessionController {
     this.sessionToken = created.session_token;
     this.status = "connecting";
     this.changed();
+    this.persist();
 
     await this.pushWorkspace({ silent: true });
     await this.connect();
@@ -169,6 +235,7 @@ class SessionController {
     this.sessionToken = result.session_token;
     this.status = result.state === "pending" ? "pending" : "connecting";
     this.changed();
+    this.persist();
 
     await this.connect();
     return result;
@@ -442,6 +509,12 @@ class SessionController {
   // -- incoming ---------------------------------------------------------
 
   async handleMessage(message) {
+    // Everything except the two high-frequency frames, so the log is a
+    // usable trace of what the server actually said.
+    if (message.type !== "presence" && message.type !== "pong") {
+      log.info("<- " + message.type);
+    }
+
     switch (message.type) {
       case "hello":
         this.role = message.you.role;
@@ -544,6 +617,60 @@ class SessionController {
         this.notePresence(message);
         break;
 
+      case "chat":
+        this.chat.push({
+          participantId: message.participant_id,
+          displayName: message.display_name,
+          text: message.text,
+          at: message.at,
+        });
+        if (this.chat.length > 400) this.chat.splice(0, this.chat.length - 400);
+        this.changed();
+        break;
+
+      case "chat_history":
+        this.chat = (message.messages || []).map((m) => ({
+          participantId: m.participant_id,
+          displayName: m.display_name,
+          text: m.text,
+          at: m.at,
+        }));
+        this.changed();
+        break;
+
+      case "board":
+        this.board = message.strokes || [];
+        this.changed();
+        break;
+
+      case "draw":
+        if (message.stroke) {
+          this.board.push(message.stroke);
+          this.changed();
+        }
+        break;
+
+      case "board_cleared":
+        this.board =
+          message.scope === "all"
+            ? []
+            : this.board.filter((st) => st.participant_id !== message.participant_id);
+        this.changed();
+        break;
+
+      case "file_locks":
+        this.locks = message.locks || {};
+        this.changed();
+        break;
+
+      case "edit_request":
+        this.promoteRequest(message.participant);
+        break;
+
+      case "edit_requested":
+        vscode.window.setStatusBarMessage("$(check) " + message.message, 4000);
+        break;
+
       case "error":
         this.handleServerError(message);
         break;
@@ -558,6 +685,10 @@ class SessionController {
   }
 
   handleServerError(message) {
+    if (message.code === "locked") {
+      vscode.window.setStatusBarMessage("$(lock) " + message.message, 4000);
+      return;
+    }
     if (message.code === "paused") {
       vscode.window.setStatusBarMessage(
         "$(debug-pause) CodeColab: the session is paused",
@@ -576,12 +707,37 @@ class SessionController {
   }
 
   notePresence(message) {
+    this.presence.set(message.participant_id, {
+      path: message.path || null,
+      line: message.line || 1,
+      column: message.column || 1,
+      selection: message.selection || null,
+      displayName: message.display_name,
+    });
+    this._onDidChangePresence.fire({
+      participantId: message.participant_id,
+      presence: this.presence.get(message.participant_id),
+    });
+
     const person = this.participants.find(
       (p) => p.participant_id === message.participant_id
     );
-    if (person) {
+    if (person && person.active_file !== message.path) {
       person.active_file = message.path;
       this.changed();
+    }
+  }
+
+  /** A viewer has asked the host to let them edit. */
+  async promoteRequest(participant) {
+    if (!this.isHost || !participant) return;
+    const choice = await vscode.window.showInformationMessage(
+      participant.display_name + " is asking to edit",
+      "Allow editing",
+      "Keep view-only"
+    );
+    if (choice === "Allow editing") {
+      this.setRole(participant.participant_id, "editor");
     }
   }
 
@@ -752,11 +908,20 @@ class SessionController {
     this._presenceTimer = setTimeout(() => {
       const relative = editor ? workspace.relativePathOf(editor.document.uri) : null;
       const position = editor ? editor.selection.active : null;
+      const selection = editor && !editor.selection.isEmpty ? editor.selection : null;
       this.send({
         type: "presence",
         path: relative,
         line: position ? position.line + 1 : null,
         column: position ? position.character + 1 : null,
+        selection: selection
+          ? {
+              start_line: selection.start.line + 1,
+              start_column: selection.start.character + 1,
+              end_line: selection.end.line + 1,
+              end_column: selection.end.character + 1,
+            }
+          : null,
       });
     }, 400);
   }
@@ -815,6 +980,34 @@ class SessionController {
   }
 
   // -- host controls ----------------------------------------------------
+
+  sendChat(text) {
+    const clean = String(text || "").trim();
+    if (!clean) return false;
+    return this.send({ type: "chat", text: clean.slice(0, 2000) });
+  }
+
+  sendStroke(stroke) {
+    // Drawn immediately on this side; the server echoes it to everyone else.
+    this.board.push(Object.assign({ participant_id: this.participantId }, stroke));
+    return this.send({ type: "draw", stroke });
+  }
+
+  clearBoard(scope) {
+    return this.send({ type: "board_clear", scope: scope === "all" ? "all" : "mine" });
+  }
+
+  requestEdit() {
+    return this.send({ type: "request_edit" });
+  }
+
+  /** Who is holding a file, if anyone other than you. */
+  lockHolder(relativePath) {
+    const holder = this.locks[relativePath];
+    if (!holder || holder === this.participantId) return null;
+    const person = this.participants.find((p) => p.participant_id === holder);
+    return person ? person.display_name : "Someone else";
+  }
 
   pause() {
     this.send({ type: "pause" });
@@ -879,6 +1072,11 @@ class SessionController {
     }
     this.session = null;
     this.participants = [];
+    this.presence.clear();
+    this.chat = [];
+    this.board = [];
+    this.locks = {};
+    this.store.clear();
     this.role = null;
     this.participantId = null;
     this.sessionToken = null;
@@ -892,6 +1090,7 @@ class SessionController {
   dispose() {
     this.reset();
     this._onDidChange.dispose();
+    this._onDidChangePresence.dispose();
   }
 }
 

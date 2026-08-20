@@ -30,6 +30,9 @@ const { Api } = require("../src/api");
 const { Identity } = require("../src/identity");
 const { SessionController } = require("../src/session");
 const { SessionPanel } = require("../src/panel");
+const { PresenceView } = require("../src/presence");
+const { isNewer, trustedTransport } = require("../src/updater");
+const { colorFor, initials } = require("../src/colors");
 const { normalizeCode } = require("../src/code");
 const paths = require("../src/paths");
 
@@ -78,8 +81,22 @@ function makeContext() {
   };
 }
 
-function newController() {
-  return new SessionController(new Api());
+function memoryStore() {
+  let value = null;
+  return {
+    read: () => value,
+    write: (v) => {
+      value = v;
+    },
+    clear: () => {
+      value = null;
+    },
+    peek: () => value,
+  };
+}
+
+function newController(store) {
+  return new SessionController(new Api(), store);
 }
 
 /** A scripted participant on a raw socket. */
@@ -144,6 +161,21 @@ async function unitTests() {
   ["../x", "/etc/passwd", "C:/Windows/a", "//srv/x", "a/../b", "con.txt", ""].forEach(
     (bad) => check("path: rejects " + JSON.stringify(bad), !paths.isSafePath(bad))
   );
+
+  check("update: 2.10.0 beats 2.9.0", isNewer("2.10.0", "2.9.0"));
+  check("update: 2.0.0 does not beat 2.0.0", !isNewer("2.0.0", "2.0.0"));
+  check("update: 1.9.9 does not beat 2.0.0", !isNewer("1.9.9", "2.0.0"));
+  check("update: https is trusted for silent install", trustedTransport("https://x.io/a"));
+  check("update: localhost is trusted", trustedTransport("http://127.0.0.1:8000/a"));
+  check(
+    "update: plain http on a public host is not",
+    !trustedTransport("http://example.com/a")
+  );
+
+  check("colour: stable for an id", colorFor(7).hex === colorFor(7).hex);
+  check("colour: differs across ids", colorFor(1).hex !== colorFor(2).hex);
+  check("initials: two words", initials("Ada Lovelace") === "AL");
+  check("initials: one word", initials("davit") === "DA");
 
   const identity = new Identity(makeContext());
   check("identity: empty until set", identity.get() === "");
@@ -349,11 +381,13 @@ async function guestPhase() {
   });
   check("guest: traversal did not escape the workspace", !fs.existsSync(escapeTarget));
 
+  // Deliberately a different file from the one the raw host just wrote: that
+  // one is briefly held by them, which has its own phase.
   const doc = stub.openDocument(
-    path.join(dir, "notes.md"),
-    fs.readFileSync(path.join(dir, "notes.md"), "utf8")
+    path.join(dir, "lesson", "step1.py"),
+    fs.readFileSync(path.join(dir, "lesson", "step1.py"), "utf8")
   );
-  doc.setText("# notes\nedited by the guest\n");
+  doc.setText("print('edited by the guest')\n");
   emitters.changeText.fire({ document: doc, contentChanges: [{}] });
   const echoed = await waitFor(
     () =>
@@ -435,6 +469,177 @@ async function disconnectPhase() {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+/**
+ * Chat, the shared board, cursor decorations, file locks, asking to edit,
+ * and coming back after a window reload.
+ */
+async function extrasPhase() {
+  console.log("\n- presence, chat, board, locks -");
+  const dir = tempWorkspace("codecolab-extras-");
+  state.workspaceRoot = dir;
+  fs.mkdirSync(path.join(dir, "src"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "src", "app.js"), "line one\nline two\nline three\n");
+
+  const store = memoryStore();
+  const controller = newController(store);
+  const presence = new PresenceView(controller);
+  controller.onDidChangePresence((event) =>
+    presence.update(event.participantId, event.presence)
+  );
+
+  const session = await controller.startHosting({
+    title: "Extras test",
+    displayName: "Ada Host",
+    allowGuests: true,
+    requireApproval: false,
+  });
+  await waitFor(() => controller.status === "active", { what: "host active" });
+
+  const joined = await request(SERVER + "/api/sessions/join", {
+    method: "POST",
+    body: { code: session.joinCode, display_name: "Bob Guest" },
+  });
+  const guest = new RawPeer("guest");
+  await guest.connect(session.publicId, joined.session_token);
+  await guest.waitFrame("hello");
+  await waitFor(
+    () => controller.participants.some((p) => p.participant_id === joined.participant_id),
+    { what: "guest on the roster" }
+  );
+  controller.setRole(joined.participant_id, "editor");
+  await guest.waitFrame("role_changed");
+
+  // ---- cursors ----------------------------------------------------------
+  stub.showEditorFor(path.join(dir, "src", "app.js"), "line one\nline two\nline three\n");
+  state.decorations.length = 0;
+  guest.send({
+    type: "presence",
+    path: "src/app.js",
+    line: 2,
+    column: 3,
+    selection: { start_line: 2, start_column: 1, end_line: 2, end_column: 5 },
+  });
+  await waitFor(() => state.decorations.some((d) => d.ranges.length), {
+    what: "a cursor to be drawn",
+  });
+  const drawn = state.decorations.filter((d) => d.ranges.length);
+  check("presence: remote cursor drawn in the editor", drawn.length >= 1);
+  check(
+    "presence: label carries the name",
+    drawn.some(
+      (d) => d.type.options.after && d.type.options.after.contentText.indexOf("Bob") !== -1
+    )
+  );
+  check(
+    "presence: selection highlighted too",
+    drawn.some((d) => d.type.options.backgroundColor)
+  );
+  check(
+    "presence: colour matches the shared palette",
+    drawn.some((d) => d.type.options.borderColor === colorFor(joined.participant_id).hex)
+  );
+
+  // ---- chat --------------------------------------------------------------
+  controller.sendChat("hello everyone");
+  const chatFrame = await guest.waitFrame("chat");
+  check("chat: reached the guest", chatFrame.text === "hello everyone", chatFrame.text);
+  guest.send({ type: "chat", text: "hi back" });
+  await waitFor(() => controller.chat.some((m) => m.text === "hi back"), {
+    what: "the reply to arrive",
+  });
+  check("chat: reply reached the host", true);
+  check(
+    "chat: both messages kept in order",
+    controller.chat.length >= 2 &&
+      controller.chat[controller.chat.length - 1].text === "hi back"
+  );
+
+  // ---- board -------------------------------------------------------------
+  controller.sendStroke({
+    color: "#FF4D8D",
+    width: 4,
+    tool: "pen",
+    points: [[0.1, 0.1], [0.5, 0.5], [0.9, 0.2]],
+  });
+  const strokeFrame = await guest.waitFrame("draw");
+  check("board: stroke reached the guest", strokeFrame.stroke.points.length === 3);
+  check("board: colour preserved", strokeFrame.stroke.color === "#FF4D8D");
+
+  guest.send({
+    type: "draw",
+    stroke: { color: "#0ACF83", width: 2, tool: "pen", points: [[0.2, 0.8], [0.4, 0.7]] },
+  });
+  await waitFor(() => controller.board.some((st) => st.color === "#0ACF83"), {
+    what: "the guest's stroke to arrive",
+  });
+  check("board: guest stroke reached the host", true);
+
+  // Points outside the canvas are clamped rather than trusted.
+  guest.send({
+    type: "draw",
+    stroke: { color: "#fff", width: 3, tool: "pen", points: [[-5, 9], [0.5, 0.5]] },
+  });
+  await waitFor(
+    () => controller.board.some((st) => st.points.some((p) => p[0] === 0 && p[1] === 1)),
+    { what: "an out-of-range point to be clamped" }
+  );
+  check("board: out-of-range points clamped to the canvas", true);
+
+  // ---- file locks --------------------------------------------------------
+  const doc = stub.openDocument(
+    path.join(dir, "src", "app.js"),
+    "line one\nline two\nline three\n"
+  );
+  doc.setText("host was here\n");
+  emitters.changeText.fire({ document: doc, contentChanges: [{}] });
+  await guest.waitFrame("file_update");
+
+  guest.frames.length = 0;
+  guest.send({ type: "file_update", path: "src/app.js", content: "guest tries to win\n" });
+  const denied = await guest.waitFrame("error");
+  check("locks: second writer is refused", denied.code === "locked", denied.code);
+  check("locks: told who has the file", denied.message.indexOf("Ada Host") !== -1, denied.message);
+  await waitFor(() => Object.keys(controller.locks).length > 0, { what: "lock state" });
+  check("locks: broadcast to everyone", controller.locks["src/app.js"] === controller.participantId);
+
+  // ---- asking to edit ----------------------------------------------------
+  controller.setRole(joined.participant_id, "viewer");
+  await guest.waitFrame("role_changed");
+  guest.frames.length = 0;
+  guest.send({ type: "request_edit" });
+  await guest.waitFrame("edit_requested");
+  check("request edit: the asker gets an acknowledgement", true);
+
+  // ---- surviving a reload ------------------------------------------------
+  check("restore: session was remembered", Boolean(store.peek()));
+  const remembered = store.peek().joinCode;
+  controller.detachWorkspaceListeners();
+  if (controller.ws) {
+    controller.ws.removeAllListeners();
+    controller.ws.close();
+  }
+  controller.ws = null;
+  controller.session = null;
+  controller.sessionToken = null;
+  controller.status = "idle";
+
+  const reborn = newController(store);
+  const restored = await reborn.restore();
+  check("restore: walked back into the same session", Boolean(restored));
+  check("restore: same join code", restored && restored.joinCode === remembered);
+  await waitFor(() => reborn.status === "active", { what: "restored session live" });
+  check("restore: connected again", reborn.status === "active");
+  check("restore: still the host", reborn.isHost);
+
+  await reborn.end();
+  check("restore: ending clears what was remembered", store.peek() === null);
+
+  presence.dispose();
+  guest.close();
+  state.editors = [];
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 async function main() {
   console.log("CodeColab extension tests against " + SERVER);
   try {
@@ -447,6 +652,7 @@ async function main() {
   await unitTests();
   await hostPhase();
   await guestPhase();
+  await extrasPhase();
   await disconnectPhase();
 
   console.log("\n" + checks + " checks, " + failures.length + " failure(s)");
