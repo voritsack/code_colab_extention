@@ -1,13 +1,13 @@
 {
-  "name": "blogapp-sync",
-  "displayName": "BlogApp Code Sync",
+  "name": "codecolab",
+  "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
-  "description": "Live code streaming for BlogApp",
-  "version": "0.0.38",
+  "description": "Share the folder you already have open. Generate a link, admit people one at a time, and code together — for teaching or for pairing.",
+  "version": "1.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/username/blogapp-sync"
+    "url": "https://github.com/voritsack/code_colab_extention"
   },
   "engines": {
     "vscode": "^1.80.0"
@@ -15,69 +15,357 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "collaboration",
+    "pair programming",
+    "teaching",
+    "live share"
+  ],
   "main": "./extension.js",
   "activationEvents": [
-    "onCommand:blogapp.startProjectSync",
-    "onCommand:blogapp.startSingleFileSync",
-    "onCommand:blogapp.saveProject",
-    "onCommand:blogapp.logout",
-    "onCommand:blogapp.connectToRoom",
-    "onCommand:blogapp.joinProjectSync"
+    "onStartupFinished",
+    "onUri"
   ],
   "contributes": {
     "configuration": {
-      "title": "BlogApp Code Sync",
+      "title": "CodeColab",
       "properties": {
-        "blogapp.serverUrl": {
+        "codecolab.serverUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8000",
-          "markdownDescription": "Backend origin used for HTTP requests. Overridden by the `BLOGAPP_SERVER_URL` environment variable."
+          "markdownDescription": "Backend origin. Overridden by the `CODECOLAB_SERVER_URL` environment variable."
         },
-        "blogapp.wsUrl": {
+        "codecolab.wsUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "WebSocket origin. Leave empty to derive it from `#blogapp.serverUrl#` (http -> ws). Overridden by the `BLOGAPP_WS_URL` environment variable."
+          "markdownDescription": "WebSocket origin. Leave empty to derive it from `#codecolab.serverUrl#` (`http` → `ws`). Overridden by `CODECOLAB_WS_URL`."
+        },
+        "codecolab.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**",
+            "**/.venv/**",
+            "**/venv/**",
+            "**/__pycache__/**",
+            "**/.next/**",
+            "**/target/**",
+            "**/*.lock",
+            "**/*.log"
+          ],
+          "description": "Glob patterns never shared or synchronised."
+        },
+        "codecolab.maxFileBytes": {
+          "type": "number",
+          "default": 512000,
+          "description": "Files larger than this are skipped. The server enforces its own limit as well."
+        },
+        "codecolab.maxFiles": {
+          "type": "number",
+          "default": 2000,
+          "description": "Maximum number of files uploaded when a session starts."
+        },
+        "codecolab.syncDelayMs": {
+          "type": "number",
+          "default": 300,
+          "description": "How long to wait after you stop typing before sending an edit."
+        },
+        "codecolab.autoOpenPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reveal the CodeColab view when a session starts."
         }
       }
     },
     "commands": [
       {
-        "command": "blogapp.startProjectSync",
-        "title": "BlogApp: Запустить трансляцию проекта"
+        "command": "codecolab.startSession",
+        "title": "Start session and generate link",
+        "category": "CodeColab",
+        "icon": "$(broadcast)"
       },
       {
-        "command": "blogapp.startSingleFileSync",
-        "title": "BlogApp: Запустить трансляцию файла"
+        "command": "codecolab.joinSession",
+        "title": "Join session by code or link",
+        "category": "CodeColab",
+        "icon": "$(sign-in)"
       },
       {
-        "command": "blogapp.saveProject",
-        "title": "BlogApp: Сохранить проект в базу данных"
+        "command": "codecolab.copyInvite",
+        "title": "Copy invite link",
+        "category": "CodeColab",
+        "icon": "$(link)"
       },
       {
-        "command": "blogapp.logout",
-        "title": "BlogApp: Выйти из аккаунта"
+        "command": "codecolab.copyCode",
+        "title": "Copy join code",
+        "category": "CodeColab",
+        "icon": "$(clippy)"
       },
       {
-        "command": "blogapp.connectToRoom",
-        "title": "BlogApp: Подключиться к комнате"
+        "command": "codecolab.pauseSession",
+        "title": "Pause session",
+        "category": "CodeColab",
+        "icon": "$(debug-pause)"
       },
       {
-        "command": "blogapp.joinProjectSync",
-        "title": "BlogApp: Подключиться к трансляции проекта"
+        "command": "codecolab.resumeSession",
+        "title": "Resume session",
+        "category": "CodeColab",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "codecolab.endSession",
+        "title": "End session",
+        "category": "CodeColab",
+        "icon": "$(circle-slash)"
+      },
+      {
+        "command": "codecolab.leaveSession",
+        "title": "Leave session",
+        "category": "CodeColab",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "codecolab.resync",
+        "title": "Resynchronise from host",
+        "category": "CodeColab",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codecolab.pushWorkspace",
+        "title": "Push current workspace to everyone",
+        "category": "CodeColab",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "codecolab.approve",
+        "title": "Admit",
+        "category": "CodeColab",
+        "icon": "$(check)"
+      },
+      {
+        "command": "codecolab.deny",
+        "title": "Refuse",
+        "category": "CodeColab",
+        "icon": "$(close)"
+      },
+      {
+        "command": "codecolab.makeEditor",
+        "title": "Allow editing",
+        "category": "CodeColab",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "codecolab.makeViewer",
+        "title": "Make view-only",
+        "category": "CodeColab",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "codecolab.removeParticipant",
+        "title": "Remove from session",
+        "category": "CodeColab",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "codecolab.signIn",
+        "title": "Sign in",
+        "category": "CodeColab",
+        "icon": "$(account)"
+      },
+      {
+        "command": "codecolab.signOut",
+        "title": "Sign out",
+        "category": "CodeColab"
+      },
+      {
+        "command": "codecolab.register",
+        "title": "Create an account",
+        "category": "CodeColab"
+      },
+      {
+        "command": "codecolab.showLog",
+        "title": "Show log",
+        "category": "CodeColab",
+        "icon": "$(output)"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codecolab",
+          "title": "CodeColab",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codecolab": [
+        {
+          "id": "codecolab.sessionView",
+          "name": "Session",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "codecolab.sessionView",
+        "contents": "Share the folder you have open and code together in real time.\n\n[Start session and generate link](command:codecolab.startSession)\n[Join with a code](command:codecolab.joinSession)\n\nThe host generates a link, you open it, and the host admits you.",
+        "when": "!codecolab.inSession"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "codecolab.copyInvite",
+          "when": "view == codecolab.sessionView && codecolab.isHost",
+          "group": "navigation@1"
+        },
+        {
+          "command": "codecolab.pauseSession",
+          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == active",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codecolab.resumeSession",
+          "when": "view == codecolab.sessionView && codecolab.isHost && codecolab.status == paused",
+          "group": "navigation@2"
+        },
+        {
+          "command": "codecolab.resync",
+          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codecolab.pushWorkspace",
+          "when": "view == codecolab.sessionView && codecolab.isHost",
+          "group": "navigation@3"
+        },
+        {
+          "command": "codecolab.endSession",
+          "when": "view == codecolab.sessionView && codecolab.isHost",
+          "group": "navigation@9"
+        },
+        {
+          "command": "codecolab.leaveSession",
+          "when": "view == codecolab.sessionView && codecolab.inSession && !codecolab.isHost",
+          "group": "navigation@9"
+        },
+        {
+          "command": "codecolab.showLog",
+          "when": "view == codecolab.sessionView",
+          "group": "overflow@1"
+        },
+        {
+          "command": "codecolab.signOut",
+          "when": "view == codecolab.sessionView",
+          "group": "overflow@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codecolab.approve",
+          "when": "view == codecolab.sessionView && viewItem == pendingParticipant",
+          "group": "inline@1"
+        },
+        {
+          "command": "codecolab.deny",
+          "when": "view == codecolab.sessionView && viewItem == pendingParticipant",
+          "group": "inline@2"
+        },
+        {
+          "command": "codecolab.makeEditor",
+          "when": "view == codecolab.sessionView && viewItem == viewerParticipant",
+          "group": "inline@1"
+        },
+        {
+          "command": "codecolab.makeViewer",
+          "when": "view == codecolab.sessionView && viewItem == editorParticipant",
+          "group": "inline@1"
+        },
+        {
+          "command": "codecolab.removeParticipant",
+          "when": "view == codecolab.sessionView && viewItem =~ /^(viewer|editor)Participant$/",
+          "group": "manage@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "codecolab.approve",
+          "when": "false"
+        },
+        {
+          "command": "codecolab.deny",
+          "when": "false"
+        },
+        {
+          "command": "codecolab.makeEditor",
+          "when": "false"
+        },
+        {
+          "command": "codecolab.makeViewer",
+          "when": "false"
+        },
+        {
+          "command": "codecolab.removeParticipant",
+          "when": "false"
+        },
+        {
+          "command": "codecolab.pauseSession",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.resumeSession",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.endSession",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.copyInvite",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.copyCode",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.pushWorkspace",
+          "when": "codecolab.isHost"
+        },
+        {
+          "command": "codecolab.leaveSession",
+          "when": "codecolab.inSession"
+        },
+        {
+          "command": "codecolab.resync",
+          "when": "codecolab.inSession"
+        }
+      ]
+    }
   },
   "scripts": {
-    "package": "vsce package --allow-missing-repository",
-    "package:patch": "vsce package patch --allow-missing-repository",
+    "lint": "eslint .",
+    "package": "vsce package",
+    "package:patch": "vsce package patch",
     "build-and-install": "npm run package:patch && powershell -Command \"code --install-extension (Get-ChildItem *.vsix | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name --force\"",
-    "lint": "echo \"Skipping lint\"",
-    "vscode:prepublish": "echo \"Skipping prepublish\""
+    "vscode:prepublish": "echo \"no build step\"",
+    "test": "node test/run.js"
   },
   "dependencies": {
     "ws": "^8.16.0"
   },
   "devDependencies": {
-    "eslint": "^10.8.1"
+    "@types/vscode": "^1.80.0",
+    "eslint": "^8.57.0"
   }
 }

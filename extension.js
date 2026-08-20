@@ -1,422 +1,440 @@
+"use strict";
+
+/**
+ * CodeColab — live collaborative coding for VS Code.
+ *
+ * The host shares the folder they already have open and gets a link plus a
+ * short code. Anyone opening the link is handed to VS Code, asks to join, and
+ * waits until the host admits them. The host can pause, resume and end the
+ * session, and change anyone's role while it runs.
+ */
+
 const vscode = require("vscode");
-const WebSocket = require("ws");
-const http = require("http");
-const https = require("https");
 
-const CLIENT_ID = "vscode_" + Math.random().toString(36).substring(2, 11);
+const config = require("./src/config");
+const log = require("./src/log");
+const workspace = require("./src/workspace");
+const { Auth } = require("./src/auth");
+const { Api } = require("./src/api");
+const { SessionController } = require("./src/session");
+const { SessionTreeProvider } = require("./src/tree");
+const { StatusBar } = require("./src/status");
+const { normalizeCode } = require("./src/code");
 
-let ws = null;
-let currentTargetId = null;
-let isApplyingRemoteChange = false;
-
-const DEFAULT_SERVER_URL = "http://127.0.0.1:8000";
-
-/**
- * Resolve the backend origin. Precedence:
- *   1. BLOGAPP_SERVER_URL environment variable
- *   2. the "blogapp.serverUrl" VS Code setting
- *   3. DEFAULT_SERVER_URL
- * Read lazily so a settings/env change is picked up without a reload.
- */
-function getServerUrl() {
-  const fromEnv = process.env.BLOGAPP_SERVER_URL;
-  const fromSettings = vscode.workspace
-    .getConfiguration("blogapp")
-    .get("serverUrl");
-  const url = fromEnv || fromSettings || DEFAULT_SERVER_URL;
-  return String(url).replace(/\/+$/, "");
-}
-
-/**
- * Resolve the WebSocket origin. Uses BLOGAPP_WS_URL / "blogapp.wsUrl" when set,
- * otherwise derives it from the server URL (http -> ws, https -> wss).
- */
-function getWsUrl() {
-  const fromEnv = process.env.BLOGAPP_WS_URL;
-  const fromSettings = vscode.workspace
-    .getConfiguration("blogapp")
-    .get("wsUrl");
-  const url = fromEnv || fromSettings;
-  if (url) return String(url).replace(/\/+$/, "");
-  return getServerUrl().replace(/^http/, "ws");
-}
-
-function makeRequest(urlString, method, headers = {}, bodyData = null) {
-  return new Promise((resolve, reject) => {
-    try {
-      const parsedUrl = new URL(urlString);
-      const client = parsedUrl.protocol === "https:" ? https : http;
-      const reqHeaders = { ...headers };
-
-      let payload = null;
-      if (bodyData) {
-        payload =
-          typeof bodyData === "string" ? bodyData : JSON.stringify(bodyData);
-        reqHeaders["Content-Length"] = Buffer.byteLength(payload);
-      }
-
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (parsedUrl.protocol === "https:" ? 443 : 80),
-        path: parsedUrl.pathname + parsedUrl.search,
-        method: method,
-        headers: reqHeaders,
-      };
-
-      const req = client.request(options, (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => {
-          const data = Buffer.concat(chunks).toString("utf8");
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            try {
-              resolve(data ? JSON.parse(data) : {});
-            } catch (e) {
-              resolve(data);
-            }
-          } else {
-            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-          }
-        });
-      });
-      req.on("error", (err) => reject(err));
-      if (payload) req.write(payload);
-      req.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
-async function getOrLoginToken(context) {
-  let token = await context.secrets.get("blogapp_token");
-  if (token) return token;
-
-  const email = await vscode.window.showInputBox({
-    prompt: "Email для BlogApp",
-    ignoreFocusOut: true,
-  });
-  if (!email) return null;
-
-  const password = await vscode.window.showInputBox({
-    prompt: "Пароль",
-    ignoreFocusOut: true,
-    password: true,
-  });
-  if (!password) return null;
-
-  try {
-    const authData = await makeRequest(
-      `${getServerUrl()}/api/token/`,
-      "POST",
-      { "Content-Type": "application/json" },
-      { email, password },
-    );
-
-    const receivedToken =
-      authData.access || authData.token || authData.key || authData.auth_token;
-
-    if (!receivedToken) throw new Error("Токен не получен");
-    await context.secrets.store("blogapp_token", receivedToken);
-    return receivedToken;
-  } catch (err) {
-    vscode.window.showErrorMessage(`Ошибка входа: ${err.message}`);
-    return null;
-  }
-}
-
-async function ensureFileExists(relativePath, initialContent = "") {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders) return null;
-  const fileUri = vscode.Uri.joinPath(workspaceFolders[0].uri, relativePath);
-  try {
-    await vscode.workspace.fs.stat(fileUri);
-  } catch (err) {
-    await vscode.workspace.fs.createDirectory(
-      vscode.Uri.joinPath(fileUri, ".."),
-    );
-    await vscode.workspace.fs.writeFile(
-      fileUri,
-      Buffer.from(initialContent, "utf8"),
-    );
-  }
-  return fileUri;
-}
-
-async function handleRemoteContentUpdate(filePath, newCode) {
-  isApplyingRemoteChange = true;
-  try {
-    const fileUri = await ensureFileExists(
-      filePath.replace(/\\/g, "/"),
-      newCode,
-    );
-    if (!fileUri) return;
-    const doc = await vscode.workspace.openTextDocument(fileUri);
-    if (doc.getText() !== newCode) {
-      const edit = new vscode.WorkspaceEdit();
-      edit.replace(
-        doc.uri,
-        new vscode.Range(
-          doc.positionAt(0),
-          doc.positionAt(doc.getText().length),
-        ),
-        newCode,
-      );
-      await vscode.workspace.applyEdit(edit);
-    }
-  } finally {
-    setTimeout(() => {
-      isApplyingRemoteChange = false;
-    }, 50);
-  }
-}
-
-function setupWebSocketListeners(socket) {
-  socket.on("message", async (data) => {
-    try {
-      const message = JSON.parse(data.toString());
-      if (message.client_id === CLIENT_ID) return;
-
-      if (message.type === "request_full_project") {
-        const relativeFiles = await vscode.workspace.findFiles(
-          "**/*",
-          "**/{node_modules,.git,dist,build}/**",
-        );
-        const filesPayload = await Promise.all(
-          relativeFiles.map(async (uri) => ({
-            path: vscode.workspace.asRelativePath(uri),
-            code: Buffer.from(await vscode.workspace.fs.readFile(uri)).toString(
-              "utf8",
-            ),
-          })),
-        );
-        socket.send(
-          JSON.stringify({
-            type: "project_structure",
-            files: filesPayload,
-            sender: "vscode",
-            client_id: CLIENT_ID,
-          }),
-        );
-      }
-
-      if (
-        (message.type === "file_update" || message.type === "code_updated") &&
-        message.code !== undefined
-      ) {
-        await handleRemoteContentUpdate(message.file_path, message.code);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  });
-}
-
-function connectWS(context, url, targetId) {
-  if (ws) {
-    ws.removeAllListeners();
-    ws.close();
-  }
-  currentTargetId = targetId;
-  context.secrets.get("blogapp_token").then((token) => {
-    ws = new WebSocket(`${url}?token=${token}`);
-    setupWebSocketListeners(ws);
-  });
-}
-
-// --- Основная активация ---
+let controller = null;
+let auth = null;
+let api = null;
 
 function activate(context) {
-  // 1. Трансляция проекта
-  let startProjectCmd = vscode.commands.registerCommand(
-    "blogapp.startProjectSync",
-    async () => {
-      let token = await getOrLoginToken(context);
-      if (!token) return;
+  log.info("CodeColab activated");
 
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders) {
-        vscode.window.showErrorMessage("Откройте папку проекта в VS Code!");
-        return;
-      }
+  auth = new Auth(context);
+  api = new Api(auth);
+  controller = new SessionController(api, auth);
 
-      const folderPath = workspaceFolders[0].uri.fsPath;
-      const projectName = folderPath.split(/[\\/]/).pop();
+  const tree = new SessionTreeProvider(controller);
+  const view = vscode.window.createTreeView("codecolab.sessionView", {
+    treeDataProvider: tree,
+  });
+  const status = new StatusBar(controller);
 
-      try {
-        const relativeFiles = await vscode.workspace.findFiles(
-          "**/*",
-          "**/{node_modules,.git,dist,build}/**",
-        );
+  vscode.commands.executeCommand("setContext", "codecolab.inSession", false);
+  vscode.commands.executeCommand("setContext", "codecolab.isHost", false);
 
-        // Используем поле 'code' вместо 'content' для предотвращения KeyError на бэкенде
-        const filesPayload = await Promise.all(
-          relativeFiles.map(async (uri) => ({
-            path: vscode.workspace.asRelativePath(uri),
-            code: Buffer.from(await vscode.workspace.fs.readFile(uri)).toString(
-              "utf8",
-            ),
-          })),
-        );
+  const register = (name, handler) =>
+    context.subscriptions.push(
+      vscode.commands.registerCommand(name, (...args) =>
+        Promise.resolve()
+          .then(() => handler(...args))
+          .catch((err) => {
+            log.error(name + ": " + (err && err.stack ? err.stack : err));
+            vscode.window.showErrorMessage(
+              "CodeColab: " + (err && err.message ? err.message : String(err))
+            );
+          })
+      )
+    );
 
-        const res = await makeRequest(
-          `${getServerUrl()}/apiP/projects/sync/`,
-          "POST",
-          {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          {
-            project_name: projectName,
-            files: filesPayload,
-          },
-        );
-
-        const projectId = res.project_id || res.id;
-        if (!projectId) {
-          throw new Error("Не удалось получить ID проекта от сервера");
-        }
-
-        connectWS(context, `${getWsUrl()}/ws/project/${projectId}/`, projectId);
-        vscode.window.showInformationMessage(
-          `🚀 Трансляция проекта "${projectName}" (ID: ${projectId}) успешно запущена!`,
-        );
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Ошибка запуска трансляции: ${err.message}`,
-        );
-      }
-    },
+  register("codecolab.startSession", () => startSession());
+  register("codecolab.joinSession", (prefill) => joinSession(prefill));
+  register("codecolab.copyInvite", () => copyInvite());
+  register("codecolab.copyCode", () => copyCode());
+  register("codecolab.pauseSession", () => requireHost().pause());
+  register("codecolab.resumeSession", () => requireHost().resume());
+  register("codecolab.endSession", () => endSession());
+  register("codecolab.leaveSession", () => leaveSession());
+  register("codecolab.resync", () => controller.resync());
+  register("codecolab.pushWorkspace", () => controller.pushWorkspace());
+  register("codecolab.approve", (node) => admit(node, "editor"));
+  register("codecolab.deny", (node) => withParticipant(node, (id) => controller.deny(id)));
+  register("codecolab.makeEditor", (node) =>
+    withParticipant(node, (id) => controller.setRole(id, "editor"))
   );
-
-  // 2. Трансляция файла
-  let startSingleFileCmd = vscode.commands.registerCommand(
-    "blogapp.startSingleFileSync",
-    async () => {
-      let token = await getOrLoginToken(context);
-      if (!token) return;
-
-      const fileId = await vscode.window.showInputBox({
-        prompt: "Введите ID файла на сайте для трансляции",
-        ignoreFocusOut: true,
-      });
-      if (!fileId) return;
-
-      connectWS(context, `${getWsUrl()}/ws/file/${fileId}/`, fileId);
-      vscode.window.showInformationMessage("🚀 Трансляция файла активна.");
-    },
+  register("codecolab.makeViewer", (node) =>
+    withParticipant(node, (id) => controller.setRole(id, "viewer"))
   );
-
-  // 3. Сохранение проекта
-  let saveProjectCmd = vscode.commands.registerCommand(
-    "blogapp.saveProject",
-    async () => {
-      let token = await getOrLoginToken(context);
-      if (!token) return;
-
-      const workspaceFolders = vscode.workspace.workspaceFolders;
-      if (!workspaceFolders) {
-        vscode.window.showErrorMessage("Нет открытой папки проекта!");
-        return;
-      }
-
-      try {
-        const relativeFiles = await vscode.workspace.findFiles(
-          "**/*",
-          "**/{node_modules,.git,dist,build}/**",
-        );
-        const filesPayload = await Promise.all(
-          relativeFiles.map(async (uri) => ({
-            path: vscode.workspace.asRelativePath(uri),
-            code: Buffer.from(await vscode.workspace.fs.readFile(uri)).toString(
-              "utf8",
-            ),
-          })),
-        );
-
-        await makeRequest(
-          `${getServerUrl()}/api/save-project/`,
-          "POST",
-          {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          { files: filesPayload },
-        );
-
-        vscode.window.showInformationMessage(
-          "💾 Проект успешно сохранен на сайте!",
-        );
-      } catch (err) {
-        vscode.window.showErrorMessage(`Ошибка сохранения: ${err.message}`);
-      }
-    },
-  );
-
-  // 4. Выход из аккаунта
-  let logoutCmd = vscode.commands.registerCommand(
-    "blogapp.logout",
-    async () => {
-      await context.secrets.delete("blogapp_token");
-      vscode.window.showInformationMessage("Выход из аккаунта выполнен.");
-    },
-  );
-
-  // 5. Подключение к комнатам
-  let connectRoomCmd = vscode.commands.registerCommand(
-    "blogapp.connectToRoom",
-    async () => {
-      let userToken = await getOrLoginToken(context);
-      if (!userToken) return;
-
-      const roomId = await vscode.window.showInputBox({
-        prompt: "Введите ID комнаты",
-      });
-      if (!roomId) return;
-
-      connectWS(context, `${getWsUrl()}/ws/room/${roomId}/`, roomId);
-      vscode.window.showInformationMessage(
-        `👥 Подключено к комнате #${roomId}`,
-      );
-    },
-  );
-
-  let joinProjectSyncCmd = vscode.commands.registerCommand(
-    "blogapp.joinProjectSync",
-    async () => {
-      vscode.commands.executeCommand("blogapp.connectToRoom");
-    },
-  );
-
-  // 6. Отслеживание изменений в файлах для отправки по WebSocket
-  let changeListener = vscode.workspace.onDidChangeTextDocument((event) => {
-    if (isApplyingRemoteChange || event.contentChanges.length === 0) return;
-    if (ws && ws.readyState === WebSocket.OPEN && currentTargetId) {
-      ws.send(
-        JSON.stringify({
-          type: "file_update",
-          file_path: vscode.workspace.asRelativePath(event.document.uri),
-          code: event.document.getText(),
-          sender: "vscode",
-          client_id: CLIENT_ID,
-        }),
-      );
+  register("codecolab.removeParticipant", (node) => removeParticipant(node));
+  register("codecolab.signIn", () => auth.signIn());
+  register("codecolab.signOut", () => auth.signOut());
+  register("codecolab.register", () => auth.register());
+  register("codecolab.showLog", () => log.show());
+  register("codecolab.showPanelOrStart", () => {
+    if (controller.inSession) {
+      return vscode.commands.executeCommand("codecolab.sessionView.focus");
     }
+    return startSession();
   });
 
   context.subscriptions.push(
-    startProjectCmd,
-    startSingleFileCmd,
-    saveProjectCmd,
-    logoutCmd,
-    connectRoomCmd,
-    joinProjectSyncCmd,
-    changeListener,
+    vscode.window.registerUriHandler({ handleUri: (uri) => handleUri(uri) })
   );
+
+  context.subscriptions.push(view, status, controller, {
+    dispose: () => log.dispose(),
+  });
+}
+
+// --------------------------------------------------------------------------
+// Commands
+// --------------------------------------------------------------------------
+
+function requireHost() {
+  if (!controller.inSession) throw new Error("You are not in a session.");
+  if (!controller.isHost) throw new Error("Only the host can do that.");
+  return controller;
+}
+
+async function startSession() {
+  if (controller.inSession) {
+    const choice = await vscode.window.showWarningMessage(
+      "A session is already running.",
+      "Show it",
+      "End it and start a new one"
+    );
+    if (choice === "Show it") {
+      return vscode.commands.executeCommand("codecolab.sessionView.focus");
+    }
+    if (choice !== "End it and start a new one") return undefined;
+    await controller.end();
+  }
+
+  const folder = workspace.rootFolder();
+  if (!folder) {
+    const choice = await vscode.window.showErrorMessage(
+      "Open a folder before starting a session — that folder is what you share.",
+      "Open folder…"
+    );
+    if (choice) vscode.commands.executeCommand("vscode.openFolder");
+    return undefined;
+  }
+
+  if (!(await auth.isSignedIn())) {
+    const record = await auth.signIn();
+    if (!record) return undefined;
+  }
+
+  const title = await vscode.window.showInputBox({
+    title: "Start a CodeColab session",
+    prompt: "What is this session called?",
+    value: folder.name,
+    ignoreFocusOut: true,
+    validateInput: (value) => (value && value.trim() ? null : "Required"),
+  });
+  if (!title) return undefined;
+
+  const audience = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(globe) Anyone with the link",
+        detail: "Guests enter a display name. You still admit each one.",
+        guests: true,
+      },
+      {
+        label: "$(shield) Signed-in accounts only",
+        detail: "Everyone must have an account on this server.",
+        guests: false,
+      },
+    ],
+    { title: "Who can join?", ignoreFocusOut: true }
+  );
+  if (!audience) return undefined;
+
+  const admission = await vscode.window.showQuickPick(
+    [
+      {
+        label: "$(person-add) I admit each person",
+        detail: "You get a prompt when somebody asks to join.",
+        approve: true,
+      },
+      {
+        label: "$(unlock) Anyone with the code walks in",
+        detail: "No prompt. Use this only for a code you keep private.",
+        approve: false,
+      },
+    ],
+    { title: "Admission", ignoreFocusOut: true }
+  );
+  if (!admission) return undefined;
+
+  const session = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "CodeColab: starting session" },
+    () =>
+      controller.startHosting({
+        title: title.trim(),
+        allowGuests: audience.guests,
+        requireApproval: admission.approve,
+      })
+  );
+
+  await vscode.env.clipboard.writeText(session.joinUrl);
+  if (config.autoOpenPanel()) {
+    vscode.commands.executeCommand("codecolab.sessionView.focus");
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    "Session live. The invite link is on your clipboard.",
+    { modal: true, detail: "Link: " + session.joinUrl + "\nCode: " + session.joinCode },
+    "Copy code",
+    "Open link in browser"
+  );
+  if (choice === "Copy code") {
+    await vscode.env.clipboard.writeText(session.joinCode);
+  } else if (choice === "Open link in browser") {
+    await vscode.env.openExternal(vscode.Uri.parse(session.joinUrl));
+  }
+  return session;
+}
+
+async function joinSession(prefill) {
+  if (controller.inSession) {
+    const choice = await vscode.window.showWarningMessage(
+      "You are already in a session.",
+      "Leave it and join the new one"
+    );
+    if (choice !== "Leave it and join the new one") return undefined;
+    controller.leave();
+  }
+
+  let raw = typeof prefill === "string" ? prefill : null;
+  if (!raw) {
+    raw = await vscode.window.showInputBox({
+      title: "Join a CodeColab session",
+      prompt: "Paste the invite link or type the code",
+      placeHolder: "abc-defg-hij",
+      ignoreFocusOut: true,
+      validateInput: (value) =>
+        value && normalizeCode(value) ? null : "Enter a code or an invite link",
+    });
+  }
+  if (!raw) return undefined;
+
+  const code = normalizeCode(raw);
+  if (!code) throw new Error("That does not look like a join code.");
+
+  let preview = null;
+  try {
+    preview = await api.peek(code);
+  } catch (err) {
+    throw new Error(
+      "No live session for code " + code + " on " + config.serverUrl() + "."
+    );
+  }
+
+  if (!(await confirmWorkspaceOverwrite(preview))) return undefined;
+
+  let asGuest = false;
+  let displayName;
+  const signedIn = await auth.isSignedIn();
+
+  if (!signedIn) {
+    if (!preview.allow_guests) {
+      const record = await auth.signIn(
+        "This session only accepts signed-in accounts."
+      );
+      if (!record) return undefined;
+    } else {
+      const how = await vscode.window.showQuickPick(
+        [
+          { label: "$(person) Join as a guest", detail: "Just a display name.", guest: true },
+          { label: "$(account) Sign in", detail: "Use an account on this server.", guest: false },
+        ],
+        { title: "Join \"" + preview.title + "\" hosted by " + preview.host_name, ignoreFocusOut: true }
+      );
+      if (!how) return undefined;
+      if (how.guest) {
+        asGuest = true;
+        displayName = await vscode.window.showInputBox({
+          title: "Your display name",
+          prompt: "What should the host see?",
+          ignoreFocusOut: true,
+          validateInput: (value) =>
+            value && value.trim().length >= 2 ? null : "At least 2 characters",
+        });
+        if (!displayName) return undefined;
+      } else {
+        const record = await auth.signIn();
+        if (!record) return undefined;
+      }
+    }
+  }
+
+  const result = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: "CodeColab: joining" },
+    () => controller.joinWithCode(code, { displayName, asGuest })
+  );
+
+  if (config.autoOpenPanel()) {
+    vscode.commands.executeCommand("codecolab.sessionView.focus");
+  }
+
+  if (result.state === "pending") {
+    vscode.window.showInformationMessage(
+      "Asked " + result.host_name + " to let you in. Hang tight."
+    );
+  }
+  return result;
+}
+
+/**
+ * Joining pulls the host's project into this folder, which overwrites files.
+ * That is destructive, so it is always confirmed.
+ */
+async function confirmWorkspaceOverwrite(preview) {
+  const folder = workspace.rootFolder();
+  if (!folder) {
+    const choice = await vscode.window.showErrorMessage(
+      "Open a folder first — the host's files are written into it.",
+      "Open folder…"
+    );
+    if (choice) vscode.commands.executeCommand("vscode.openFolder");
+    return false;
+  }
+
+  if (await workspace.looksEmpty()) return true;
+
+  const choice = await vscode.window.showWarningMessage(
+    "Joining will write the host's files into this folder.",
+    {
+      modal: true,
+      detail:
+        'Folder: ' + folder.uri.fsPath +
+        '\nSession: "' + preview.title + '" hosted by ' + preview.host_name +
+        "\n\nFiles with the same path will be overwritten. Open an empty folder instead if you want to keep what is here.",
+    },
+    "Join and overwrite"
+  );
+  return choice === "Join and overwrite";
+}
+
+async function copyInvite() {
+  if (!controller.inSession || !controller.session.joinUrl) {
+    throw new Error("No invite link yet.");
+  }
+  await vscode.env.clipboard.writeText(controller.session.joinUrl);
+  vscode.window.setStatusBarMessage("$(check) Invite link copied", 3000);
+}
+
+async function copyCode() {
+  if (!controller.inSession || !controller.session.joinCode) {
+    throw new Error("No join code yet.");
+  }
+  await vscode.env.clipboard.writeText(controller.session.joinCode);
+  vscode.window.setStatusBarMessage("$(check) Join code copied", 3000);
+}
+
+async function endSession() {
+  requireHost();
+  const choice = await vscode.window.showWarningMessage(
+    'End "' + controller.session.title + '"?',
+    { modal: true, detail: "Everyone is disconnected and the link stops working." },
+    "End session"
+  );
+  if (choice !== "End session") return;
+  await controller.end();
+  vscode.window.showInformationMessage("CodeColab: session ended.");
+}
+
+async function leaveSession() {
+  if (!controller.inSession) throw new Error("You are not in a session.");
+  controller.leave();
+  vscode.window.showInformationMessage("CodeColab: you left the session.");
+}
+
+function withParticipant(node, action) {
+  requireHost();
+  const id = node && node.participantId;
+  if (!id) throw new Error("Select a participant first.");
+  action(id);
+}
+
+async function admit(node, defaultRole) {
+  requireHost();
+  const id = node && node.participantId;
+  if (!id) throw new Error("Select a participant first.");
+
+  const choice = await vscode.window.showQuickPick(
+    [
+      { label: "$(edit) Allow editing", role: "editor" },
+      { label: "$(eye) View only", role: "viewer" },
+    ],
+    { title: "Admit " + (node.label || "participant") + " as", ignoreFocusOut: true }
+  );
+  controller.approve(id, choice ? choice.role : defaultRole);
+}
+
+async function removeParticipant(node) {
+  requireHost();
+  const id = node && node.participantId;
+  if (!id) throw new Error("Select a participant first.");
+  const choice = await vscode.window.showWarningMessage(
+    "Remove " + (node.label || "this participant") + " from the session?",
+    { modal: true },
+    "Remove"
+  );
+  if (choice === "Remove") controller.removeParticipant(id);
+}
+
+// --------------------------------------------------------------------------
+// vscode://local.codecolab/join?code=…&server=…
+// --------------------------------------------------------------------------
+
+async function handleUri(uri) {
+  log.info("Handling URI " + uri.toString());
+  const params = new URLSearchParams(uri.query || "");
+  const code = normalizeCode(params.get("code") || "");
+  const server = (params.get("server") || "").replace(/\/+$/, "");
+
+  if (uri.path !== "/join" || !code) {
+    vscode.window.showWarningMessage("CodeColab: that link is not a join link.");
+    return;
+  }
+
+  if (server && server !== config.serverUrl()) {
+    // A link can point anywhere, so switching servers is always confirmed:
+    // the new server would receive this workspace's contents.
+    const choice = await vscode.window.showWarningMessage(
+      "This invite is for a different CodeColab server.",
+      {
+        modal: true,
+        detail:
+          "Currently configured: " + config.serverUrl() +
+          "\nInvite points at:    " + server +
+          "\n\nJoining sends the contents of your open folder to that server. Only continue if you trust it.",
+      },
+      "Trust and switch",
+      "Join without switching"
+    );
+    if (!choice) return;
+    if (choice === "Trust and switch") {
+      await config.setServerUrl(server);
+    }
+  }
+
+  await joinSession(code);
 }
 
 function deactivate() {
-  if (ws) ws.close();
+  if (controller) controller.dispose();
 }
 
 module.exports = { activate, deactivate };
