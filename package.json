@@ -3,7 +3,7 @@
   "displayName": "CodeColab — Live Code Collaboration",
   "publisher": "local",
   "description": "Share the folder you already have open. Generate a link, admit people one at a time, and code together — for teaching or for pairing.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "license": "MIT",
   "repository": {
     "type": "git",

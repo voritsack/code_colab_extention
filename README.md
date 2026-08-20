@@ -49,6 +49,12 @@ and the participant list, the status bar turns red, and a **Reconnect** entry
 appears at the top of the view - the session is still on the server, so you
 rejoin the same one rather than starting over.
 
+The extension sends a heartbeat every 25 seconds, so an idle session survives
+a proxy's read timeout - nginx closes idle upstream connections after 60
+seconds by default, and a session where nobody is typing is idle by
+definition. The same heartbeat notices a dead connection in about a minute
+instead of waiting on TCP.
+
 If the server answers the WebSocket handshake with ordinary HTTP instead of
 upgrading it, that is reported as what it is rather than retried six times and
 given up on. It almost always means a proxy in front of the backend is not
@@ -126,7 +132,7 @@ names, so that decision is always yours.
 ```bash
 npm install
 npm run package          # produces codecolab-<version>.vsix
-code --install-extension codecolab-1.3.0.vsix
+code --install-extension codecolab-1.4.0.vsix
 ```
 
 If the old `blogapp-sync` extension is still installed, uninstall it — this is

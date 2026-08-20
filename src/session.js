@@ -37,6 +37,14 @@ const TERMINAL_CLOSE_CODES = new Set([
 
 const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000, 30000];
 
+// Reverse proxies close idle upstream connections - nginx defaults to 60
+// seconds - and a session where nobody is typing is idle by definition. A
+// heartbeat well inside that window keeps the socket alive whatever the proxy
+// in front is configured to do, and doubles as dead-peer detection: TCP alone
+// can take minutes to notice a connection that is gone.
+const HEARTBEAT_MS = 25000;
+const HEARTBEAT_TIMEOUT_MS = 70000;
+
 class SessionController {
   /**
    * @param {import("./api").Api} api
@@ -61,6 +69,8 @@ class SessionController {
     this._reconnectTimer = null;
 
     this._listeners = [];
+    this._heartbeat = null;
+    this._lastPong = 0;
     this._pending = new Map(); // path -> timer
     this._lastRemote = new Map(); // path -> content we just applied
     this._presenceTimer = null;
@@ -192,6 +202,7 @@ class SessionController {
         log.info("Socket open");
         this._reconnectAttempt = 0;
         this.attachWorkspaceListeners();
+        this.startHeartbeat();
         if (!settled) {
           settled = true;
           resolve(true);
@@ -238,6 +249,7 @@ class SessionController {
       socket.on("close", (code, reasonBuffer) => {
         const reason = reasonBuffer ? reasonBuffer.toString() : "";
         log.info("Socket closed (" + code + ") " + reason);
+        this.stopHeartbeat();
         this.detachWorkspaceListeners();
         if (!settled) {
           settled = true;
@@ -333,6 +345,7 @@ class SessionController {
    * rejoin with.
    */
   goOffline(error) {
+    this.stopHeartbeat();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
@@ -390,6 +403,36 @@ class SessionController {
       });
     }
     return ok;
+  }
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this._lastPong = Date.now();
+    this._heartbeat = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      if (Date.now() - this._lastPong > HEARTBEAT_TIMEOUT_MS) {
+        // Frames are going out and nothing is coming back: the connection is
+        // gone even though the socket still looks open. Kill it so the normal
+        // reconnect path runs instead of waiting on TCP.
+        log.warn("No response to heartbeat - dropping the connection");
+        try {
+          this.ws.terminate();
+        } catch (err) {
+          /* already gone */
+        }
+        return;
+      }
+
+      this.send({ type: "ping", t: Date.now() });
+    }, HEARTBEAT_MS);
+  }
+
+  stopHeartbeat() {
+    if (this._heartbeat) {
+      clearInterval(this._heartbeat);
+      this._heartbeat = null;
+    }
   }
 
   send(payload) {
@@ -513,6 +556,7 @@ class SessionController {
         break;
 
       case "pong":
+        this._lastPong = Date.now();
         break;
 
       default:
@@ -817,6 +861,7 @@ class SessionController {
 
   reset() {
     this._closing = true;
+    this.stopHeartbeat();
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;

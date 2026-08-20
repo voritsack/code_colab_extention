@@ -191,6 +191,17 @@ async function hostPhase() {
   check("host: socket connected and active", controller.status === "active");
   check("host: role is host", controller.isHost);
 
+  // Idle sockets have to survive a proxy's read timeout on their own.
+  check("host: heartbeat armed", controller._heartbeat !== null);
+  const pongBefore = controller._lastPong;
+  await sleep(5);
+  controller.send({ type: "ping", t: Date.now() });
+  await waitFor(() => controller._lastPong > pongBefore, {
+    timeout: 6000,
+    what: "a pong back from the server",
+  });
+  check("host: server answers the heartbeat", controller._lastPong > pongBefore);
+
   // The guest joins on a raw socket.
   const joined = await request(SERVER + "/api/sessions/join", {
     method: "POST",
