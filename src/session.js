@@ -1037,8 +1037,14 @@ class SessionController {
    * mangled on the way through - so those go via attachments instead.
    */
   async shareFile(relativePath) {
-    if (!this.canEdit) {
+    if (this.status === "paused") {
+      throw new Error("The session is paused. Resume it first.");
+    }
+    if (this.role !== "host" && this.role !== "editor") {
       throw new Error("You need editing access to share a file.");
+    }
+    if (!this.canEdit) {
+      throw new Error("Not connected to the session.");
     }
     const content = await workspace.readTextFile(relativePath);
     if (content === null) {

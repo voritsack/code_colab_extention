@@ -303,6 +303,18 @@ async function hostPhase() {
     .some((f) => f.type === "file_update" && f.content.indexOf("while paused") !== -1);
   check("host: nothing propagates while paused", !leaked);
 
+  // Pausing freezes the code so people can talk about it - and pointing at
+  // the thing you are asking about is talking, so the board keeps working.
+  guest.frames.length = 0;
+  controller.sendStroke({
+    color: "#0ACF83", width: 3, tool: "pen", points: [[0.2, 0.2], [0.6, 0.4]],
+  });
+  const drawnWhilePaused = await waitFor(
+    () => guest.frames.find((f) => f.type === "draw"),
+    { what: "a stroke to get through while paused" }
+  );
+  check("host: the board still works while paused", Boolean(drawnWhilePaused));
+
   controller.resume();
   await waitFor(() => controller.status === "active", { what: "resumed" });
   check("host: resume applied", controller.status === "active");

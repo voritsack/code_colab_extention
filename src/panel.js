@@ -665,7 +665,9 @@ ${logo ? `<div class="brandbar"><img src="${logo}" width="20" height="20" alt=""
       root.appendChild(list);
     }
 
-    if (!state.isHost) return;
+    // Unlocking is an editing action, not a hosting one - an editor who
+    // needs a skipped file should not have to ask the host for it.
+    if (!state.isHost && state.role !== "editor") return;
 
     // Files the exclude list or the size cap kept back.
     root.appendChild(el("h2", null, "Share a skipped file"));
