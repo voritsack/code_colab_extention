@@ -1,227 +1,153 @@
 # Publishing CodeColab
 
-How to get this extension onto the Visual Studio Marketplace, and what breaks
-if you skip a step.
-
-Everything the marketplace needs is already in `package.json` except one
-thing: `publisher` is still `"local"`. Read [Before you
-publish](#before-you-publish) first — changing it breaks every invite link
-unless the backend changes with it.
+Everything in the code is ready. Three things are left, and they all need you.
 
 ---
 
-## What you need
+## 1. Create the publisher
 
-| | |
-| --- | --- |
-| Microsoft account | any personal or work account |
-| Azure DevOps organization | free, name does not matter |
-| Personal Access Token | scoped to Marketplace → Manage |
-| Publisher ID | permanent, globally unique, lowercase |
+Go to <https://marketplace.visualstudio.com/manage> and sign in with a
+Microsoft account.
 
-## 1. Azure DevOps organization
+Create a publisher with the ID **`voritsack`**. It has to be exactly that —
+it is already set in `package.json` and in the backend. (If you want a
+different one, see [Changing the publisher](#changing-the-publisher).)
 
-Marketplace publisher accounts are backed by Azure DevOps, even though you
-never otherwise use it.
+If it asks you to create an Azure DevOps organization first, do it. The name
+does not matter and you will never use it again.
 
-Sign in at <https://dev.azure.com> and create an organization if you have
-none. The name is irrelevant — nobody sees it.
+## 2. Get a token and publish
 
-## 2. Personal Access Token
+In Azure DevOps (<https://dev.azure.com>): your avatar, top right →
+**Personal Access Tokens** → **New Token**.
 
-In Azure DevOps: user icon (top right) → **Personal Access Tokens** → **New
-Token**.
+Two settings matter:
 
-- **Organization: All accessible organizations** — not your org name. This is
-  the single most common reason publishing fails with a `401`.
-- **Scopes: Custom defined** → find **Marketplace** → tick **Manage**.
-- Expiry: whatever you like; you will need a new one when it lapses.
+- **Organization: All accessible organizations** — not your org name.
+- **Scopes: Custom defined** → **Marketplace** → **Manage**.
 
-Copy the token. It is shown once and cannot be retrieved again.
-
-## 3. Create the publisher
-
-Go to <https://marketplace.visualstudio.com/manage>, sign in with the same
-Microsoft account, and create a publisher.
-
-The **ID** is what goes in `package.json`. It is permanent, cannot be renamed,
-and becomes part of the extension's identity forever. The **display name** is
-cosmetic and can be changed later.
-
-## 4. Point the extension at your publisher
-
-See [Before you publish](#before-you-publish) — this is the step with
-consequences elsewhere.
+Copy the token; it is only shown once.
 
 ```bash
 cd VScode-ex
-npx @vscode/vsce login <your-publisher-id>   # paste the PAT when asked
+npx @vscode/vsce login voritsack     # paste the token
+npm run publish:marketplace
 ```
 
-The token is stored in your keychain, so you only do this once per machine.
+Live in five to ten minutes. Login is once per machine.
 
-## 5. Publish
+## 3. Fix the deployed `.env`
+
+**Do this or every invite link breaks.**
+
+The "Open in VS Code" button builds `vscode://voritsack.codecolab/join?...`.
+The server on `code-colab.renode.space` still has the old placeholder, and
+`.env` is not in the repository, so pushing does not fix it.
+
+In the hosting panel's file manager, open `.env` and set:
+
+```
+VSCODE_EXTENSION_ID=voritsack.codecolab
+```
+
+Restart, then check:
 
 ```bash
-npm run publish:marketplace          # publishes the current version
+curl -s https://code-colab.renode.space/api/info
 ```
 
-or, to bump the version and publish in one step:
-
-```bash
-npx @vscode/vsce publish patch       # 2.1.0 -> 2.1.1
-npx @vscode/vsce publish minor       # 2.1.0 -> 2.2.0
-```
-
-Publishing the same version twice is rejected, so always bump.
-
-The listing appears in search within about five to ten minutes. A first
-publish can sit in Microsoft's verification for longer.
+It must say `"extension_id":"voritsack.codecolab"`. If it still says
+`local.codecolab`, the button will do nothing at all — no error, no message,
+it just fails silently. The server also warns about this in its startup log.
 
 ---
 
-## Before you publish
+## Optional: the repository link
 
-### Changing `publisher` breaks every invite link
+`package.json` points at `https://github.com/voritsack/code_colab_extention`,
+which is private, so the **Repository** link on the listing will 404 for
+everyone.
 
-The "Open in VS Code" button on the join page opens
-`vscode://<publisher>.<name>/join?code=…`. Right now that is
-`vscode://voritsack.codecolab/join`. The moment the publisher changes, every link
-the backend generates points at an extension ID that no longer exists — and
-it fails **silently**: the browser just does nothing.
+Either make the repository public, or delete the `repository` field from
+`package.json` before publishing.
 
-Six places have to change together:
+## Optional: Open VSX
 
-| File | What |
-| --- | --- |
-| `VScode-ex/package.json` | `publisher` |
-| `VScode-ex/extension.js` | the URI-handler comment |
-| `VScode-ex/src/code.js` | the deep-link comment |
-| `VScode-ex/test/run.js` | the deep-link test fixture |
-| `BACK/app/config.py` | `vscode_extension_id` default |
-| `BACK/.env`, `BACK/.env.production` | `VSCODE_EXTENSION_ID` |
-
-The backend one is the one that actually matters at runtime, and it is the
-easiest to forget, because nothing errors — the button simply stops working.
-
-Check it afterwards:
+Cursor, VSCodium and Windsurf cannot reach Microsoft's marketplace. Publishing
+to [Open VSX](https://open-vsx.org) covers them. Separate site, separate
+token, same publisher ID.
 
 ```bash
-curl -s https://code-colab.renode.space/api/info | grep extension_id
-```
-
-That must match `<publisher>.codecolab` exactly.
-
-### Marketplace updates will fight the self-hosted updater
-
-Once the extension is on the marketplace, VS Code updates it itself. This
-extension also has its own updater, which pulls builds from
-`/api/extension/latest` on the backend and installs them.
-
-Both running at once means two things can install different versions over
-each other. When you publish, change the default in `package.json`:
-
-```json
-"codecolab.autoUpdate": { "default": "off" }
-```
-
-The server-hosted build then only serves people who sideload the `.vsix`,
-which is still worth keeping for testing.
-
-### The repository is private
-
-`package.json` points `repository` at
-`https://github.com/voritsack/code_colab_extention`, which is private. The
-marketplace renders a **Repository** link on the listing that will 404 for
-every visitor.
-
-Either make the repository public, or remove the `repository` field before
-publishing.
-
-### Anyone can then install it
-
-Publishing is public. Everyone who installs it points at
-`https://code-colab.renode.space` by default — a single server you run, with
-open session creation. Before publishing, decide whether you want that, and
-consider setting `HOST_ACCESS_CODE` in the backend so strangers cannot create
-sessions on your server.
-
----
-
-## Also publish to Open VSX
-
-Cursor, VSCodium, Windsurf and Gitpod cannot reach Microsoft's marketplace.
-They use [Open VSX](https://open-vsx.org) instead. It is a separate registry
-with a separate token.
-
-```bash
-# token from https://open-vsx.org/user-settings/tokens
-npx ovsx create-namespace <your-publisher-id> -p <token>   # once
+npx ovsx create-namespace voritsack -p <token>   # once
 npm run publish:openvsx -- -p <token>
 ```
 
-Use the same publisher ID in both so the extension identity matches.
-
 ---
 
-## Releasing an update later
+## Releasing an update
 
 ```bash
 cd VScode-ex
 node test/run.js http://127.0.0.1:8000     # against a local backend
-npx @vscode/vsce publish minor
+npx @vscode/vsce publish minor             # bumps the version and publishes
 ```
 
-If you are still serving builds from the backend as well, publish there too
-so sideloaded installs stay current:
+Publishing the same version twice is rejected, so always bump.
+
+To also serve the build to people who sideload:
 
 ```bash
 cd ../BACK
 python scripts/publish_extension.py ../VScode-ex/codecolab-<version>.vsix \
   --notes "What changed"
-git add app/static/downloads && git commit && git push
+git add app/static/downloads && git commit -m "chore: publish <version>" && git push
 ```
 
 The deployment folder is rebuilt from git on every start, so an uncommitted
-build disappears on the next restart.
+build disappears at the next restart.
 
 ---
 
-## When it goes wrong
+## Changing the publisher
 
-**`ERROR Failed request: (401)`**
-The token lacks the right scope, or — far more likely — it was not created
-for *All accessible organizations*. Make a new one; the setting cannot be
-changed on an existing token.
+If you create a publisher other than `voritsack`:
 
-**`ERROR The Personal Access Token verification has failed`**
-The token has expired, or it belongs to a different Microsoft account than
-the publisher.
+```bash
+cd VScode-ex
+node scripts/set-publisher.js <new-id>
+```
 
-**`ERROR Missing publisher name`**
-`publisher` is still `"local"` in `package.json`.
+That updates the extension and the backend together — nine places. Doing it
+by hand means eventually missing the backend and wondering why invite links
+stopped opening. Then redeploy the backend and update its `.env` as in
+[step 3](#3-fix-the-deployed-env).
 
-**`ERROR <version> is already published`**
-Bump the version, or use `vsce publish patch`.
+## Updates after publishing
 
-**`ERROR Make sure to edit the README.md file before you package`**
-Only fires on template README content; this repository's README is fine.
+`codecolab.autoUpdate` is off by default, which is right for a Marketplace
+install: VS Code keeps it current on its own, and two updaters installing over
+each other is worse than none.
 
-**`WARNING A 'repository' field is missing`**
-Only if you removed it. Add `--allow-missing-repository` to package anyway.
-
-**Published, but the "Open in VS Code" button does nothing**
-The extension ID and `VSCODE_EXTENSION_ID` disagree. See [Changing
-`publisher`](#changing-publisher-breaks-every-invite-link).
+Only turn it on (`silent` or `ask`) if you hand people the `.vsix` directly
+instead.
 
 ---
+
+## Errors you might hit
+
+| Message | Cause |
+| --- | --- |
+| `Failed request: (401)` | Token was not created for *All accessible organizations*. Make a new one — it cannot be changed. |
+| `Personal Access Token verification has failed` | Token expired, or it belongs to a different Microsoft account than the publisher. |
+| `Missing publisher name` | `publisher` is still `local` in `package.json`. |
+| `<version> is already published` | Bump the version, or use `vsce publish patch`. |
+| Published, but "Open in VS Code" does nothing | The deployed `VSCODE_EXTENSION_ID` does not match. See [step 3](#3-fix-the-deployed-env). |
 
 ## Unpublishing
 
 ```bash
-npx @vscode/vsce unpublish <publisher>.codecolab
+npx @vscode/vsce unpublish voritsack.codecolab
 ```
 
-This removes the listing, but the publisher ID and extension name stay
-burned — you cannot republish under the same identity later. Treat the first
-publish as one-way.
+The listing goes, but the publisher ID and extension name stay burned — you
+cannot republish under the same identity. Treat the first publish as one-way.

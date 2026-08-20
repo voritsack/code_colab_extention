@@ -1,16 +1,8 @@
-<img src="https://code-colab.renode.space/static/logo.png" alt="" width="88" />
-
 # CodeColab — live code collaboration for VS Code
 
 Share the folder you already have open. You get a link and a short code; the
 people you invite open it, VS Code takes over, and you admit them one at a
 time. Everyone edits in their own editor.
-
-> **Where your code goes.** Sessions run through a server, and this extension
-> ships pointing at `https://code-colab.renode.space`. Starting a session
-> uploads the contents of your open folder there. Change
-> **Settings → CodeColab → Server Url** to run it against your own
-> — the backend is open source and self-hostable.
 
 Backend: <https://github.com/voritsack/code_colab_back>
 
@@ -189,9 +181,6 @@ over plain http on a public address it downgrades to asking — and the
 download has to match the checksum the manifest advertised.
 
 Set `codecolab.autoUpdate` to `ask` or `off` to change that.
-
-See [PUBLISHING.md](PUBLISHING.md) for getting this onto the Visual Studio
-Marketplace and Open VSX.
 
 ## Install
 

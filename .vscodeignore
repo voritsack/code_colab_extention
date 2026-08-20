@@ -9,6 +9,3 @@ node_modules/.bin/**
 *.vsix
 **/*.map
 test/**
-PUBLISHING.md
-scripts/**
-.env.example
