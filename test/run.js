@@ -158,7 +158,7 @@ async function unitTests() {
   check("code: from url", normalizeCode("https://x.io/j/abc-defg-hij") === "abc-defg-hij");
   check(
     "code: from deep link",
-    normalizeCode("vscode://ddatunashvili.codecolab/join?code=abc-defg-hij&server=http://x") ===
+    normalizeCode("vscode://code-colab.codecolab/join?code=abc-defg-hij&server=http://x") ===
       "abc-defg-hij"
   );
   check("code: rejects junk", normalizeCode("hello") === "");
@@ -191,7 +191,7 @@ async function unitTests() {
 
   installLegacy();
   const removedOld = await removeLegacyInstall({
-    extension: { id: "ddatunashvili.codecolab" },
+    extension: { id: "code-colab.codecolab" },
   });
   check(
     "legacy: the current build removes every older id",
@@ -221,7 +221,7 @@ async function unitTests() {
   state.executed.length = 0;
   state.extensions.clear();
   const removedNothing = await removeLegacyInstall({
-    extension: { id: "ddatunashvili.codecolab" },
+    extension: { id: "code-colab.codecolab" },
   });
   check(
     "legacy: nothing to do when no old id is installed",

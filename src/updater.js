@@ -43,11 +43,16 @@ const LAST_CHECK_KEY = "codecolab.lastUpdateCheck";
  * old one rather than over it. Two copies then activate together: two
  * pollers, two panels, two sets of commands bidding for the same names.
  *
- * The publisher went `voritsack` -> `codecolab` -> `ddatunashvili`, and the
- * server handed out builds under each, so a machine can be carrying either of
- * the first two. The current build removes both.
+ * The publisher went `voritsack` -> `codecolab` -> `ddatunashvili` ->
+ * `code-colab` while the Marketplace listing was being sorted out, and the
+ * server handed out builds under each, so a machine can be carrying any of
+ * the earlier ones. The current build removes all of them.
  */
-const LEGACY_EXTENSION_IDS = ["voritsack.codecolab", "codecolab.codecolab"];
+const LEGACY_EXTENSION_IDS = [
+  "voritsack.codecolab",
+  "codecolab.codecolab",
+  "ddatunashvili.codecolab",
+];
 const SKIPPED_KEY = "codecolab.skippedVersion";
 const CHECK_EVERY_MS = 60 * 60 * 1000; // hourly - a build should not sit unseen all day
 const POLL_EVERY_MS = 15 * 60 * 1000; // how often the timer looks; the throttle above decides
