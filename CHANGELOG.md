@@ -1,13 +1,13 @@
 # Changelog
 
-## 1.0.0
+## 0.1.0
 
 First Marketplace release, published as `code-colab.codecolab`.
 
-The version restarts at 1.0.0 here. Everything below was sideloaded from the
+The version restarts at 0.1.0 here. Everything below was sideloaded from the
 CodeColab server before the extension had a Marketplace listing, and those
 2.x numbers describe the same code continuing - not a later release than this
-one. An installed 2.6.x build will not see 1.0.0 as an update; reinstall from
+one. An installed 2.6.x build will not see 0.1.0 as an update; reinstall from
 the Marketplace to move across.
 
 The publisher is `code-colab`, displayed as CodeColab Live. Builds the server
