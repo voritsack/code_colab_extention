@@ -8,14 +8,14 @@ Copy each value into the matching field at
 | Field | Value |
 | --- | --- |
 | **Name** | `CodeColab` |
-| **ID** | `codecolab` |
+| **ID** | `ddatunashvili` |
 | **Verified domain** | *leave empty* |
 
 ### Read this before submitting
 
 The ID is not a display name — it is the namespace every extension is
 published under, it forms the extension's permanent identifier
-(`codecolab.codecolab`), and **it can never be changed after creation**.
+(`ddatunashvili.codecolab`), and **it can never be changed after creation**.
 
 `package.json` declares:
 

@@ -38,14 +38,16 @@ const { request, download } = require("./http");
 
 const LAST_CHECK_KEY = "codecolab.lastUpdateCheck";
 /**
- * The publisher changed from `voritsack` to `codecolab` for the Marketplace
- * release, and an extension is identified by `<publisher>.<name>`, so VS Code
- * sees the new build as a different extension and installs it beside the old
- * one rather than over it. Two copies then activate together: two pollers,
- * two panels, two sets of commands bidding for the same names. The new build
- * removes the old one.
+ * An extension is identified by `<publisher>.<name>`, so every publisher
+ * change makes VS Code see a different extension and install it beside the
+ * old one rather than over it. Two copies then activate together: two
+ * pollers, two panels, two sets of commands bidding for the same names.
+ *
+ * The publisher went `voritsack` -> `codecolab` -> `ddatunashvili`, and the
+ * server handed out builds under each, so a machine can be carrying either of
+ * the first two. The current build removes both.
  */
-const LEGACY_EXTENSION_ID = "voritsack.codecolab";
+const LEGACY_EXTENSION_IDS = ["voritsack.codecolab", "codecolab.codecolab"];
 const SKIPPED_KEY = "codecolab.skippedVersion";
 const CHECK_EVERY_MS = 60 * 60 * 1000; // hourly - a build should not sit unseen all day
 const POLL_EVERY_MS = 15 * 60 * 1000; // how often the timer looks; the throttle above decides
@@ -74,41 +76,43 @@ function trustedTransport(url) {
 }
 
 /**
- * Uninstall the pre-rename copy, if it is still there.
+ * Uninstall any pre-rename copy still installed.
  *
- * Safe to call at any time: it does nothing when the old id is not installed,
- * and it refuses to run when *we* are the old copy - an extension asking for
- * its own removal would be torn down half way through this function, before
- * it could install anything or reload the window.
+ * Safe to call at any time: it skips ids that are not installed, and it never
+ * removes the id we are running as - an extension asking for its own removal
+ * would be torn down half way through this function, before it could install
+ * anything or reload the window.
  *
  * @param {vscode.ExtensionContext} [context] used to identify the running
  *   extension; when omitted the self-check falls back to the id lookup.
- * @returns {Promise<boolean>} whether an old copy was removed
+ * @returns {Promise<string[]>} the ids that were removed
  */
 async function removeLegacyInstall(context) {
   const own = context && context.extension && context.extension.id;
-  if (own && own.toLowerCase() === LEGACY_EXTENSION_ID) return false;
+  const removed = [];
 
-  if (!vscode.extensions.getExtension(LEGACY_EXTENSION_ID)) return false;
-
-  try {
-    await vscode.commands.executeCommand(
-      "workbench.extensions.uninstallExtension",
-      LEGACY_EXTENSION_ID
-    );
-    log.info("Removed the superseded " + LEGACY_EXTENSION_ID);
-    return true;
-  } catch (err) {
-    // Not fatal. Two copies running is untidy, not broken, and the person can
-    // remove the old one by hand; failing the update over it would be worse.
-    log.warn(
-      "Could not remove " +
-        LEGACY_EXTENSION_ID +
-        ": " +
-        (err && err.message ? err.message : String(err))
-    );
-    return false;
+  for (const id of LEGACY_EXTENSION_IDS) {
+    if (own && own.toLowerCase() === id) continue;
+    if (!vscode.extensions.getExtension(id)) continue;
+    try {
+      await vscode.commands.executeCommand(
+        "workbench.extensions.uninstallExtension",
+        id
+      );
+      log.info("Removed the superseded " + id);
+      removed.push(id);
+    } catch (err) {
+      // Not fatal. Two copies running is untidy, not broken, and the person
+      // can remove the old one by hand; failing the update over it is worse.
+      log.warn(
+        "Could not remove " +
+          id +
+          ": " +
+          (err && err.message ? err.message : String(err))
+      );
+    }
   }
+  return removed;
 }
 
 class Updater {
@@ -287,7 +291,7 @@ module.exports = {
   isNewer,
   trustedTransport,
   removeLegacyInstall,
-  LEGACY_EXTENSION_ID,
+  LEGACY_EXTENSION_IDS,
   CHECK_EVERY_MS,
   POLL_EVERY_MS,
 };

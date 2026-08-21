@@ -639,7 +639,7 @@ async function changeName() {
 }
 
 // --------------------------------------------------------------------------
-// vscode://codecolab.codecolab/join?code=…&server=…
+// vscode://ddatunashvili.codecolab/join?code=…&server=…
 // --------------------------------------------------------------------------
 
 async function handleUri(uri) {

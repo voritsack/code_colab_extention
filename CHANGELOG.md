@@ -2,13 +2,17 @@
 
 ## 1.0.0
 
-First Marketplace release, published as `codecolab.codecolab`.
+First Marketplace release, published as `ddatunashvili.codecolab`.
 
 The version restarts at 1.0.0 here. Everything below was sideloaded from the
 CodeColab server before the extension had a Marketplace listing, and those
 2.x numbers describe the same code continuing - not a later release than this
 one. An installed 2.6.x build will not see 1.0.0 as an update; reinstall from
 the Marketplace to move across.
+
+The publisher is `ddatunashvili`, the account that owns the listing. Builds
+the server handed out under `voritsack` and `codecolab` are removed
+automatically once this one activates.
 
 ## Before the Marketplace listing
 

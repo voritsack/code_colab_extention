@@ -1,13 +1,13 @@
 {
   "name": "codecolab",
   "displayName": "CodeColab — Live Code Collaboration",
-  "publisher": "codecolab",
+  "publisher": "ddatunashvili",
   "description": "Share the folder you already have open. No accounts: pick a name, generate a link, admit people one at a time, and code together.",
   "version": "1.0.0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/voritsack/code_colab_extention"
+    "url": "https://github.com/voritsack/code_colab_extention.git"
   },
   "engines": {
     "vscode": "^1.80.0"
@@ -345,7 +345,6 @@
     "@vscode/vsce": "^3.2.0"
   },
   "icon": "media/logo.png",
-  "pricing": "Free",
   "galleryBanner": {
     "color": "#5B5BF0",
     "theme": "dark"
@@ -353,6 +352,5 @@
   "bugs": {
     "url": "https://github.com/voritsack/code_colab_extention/issues"
   },
-  "qna": "marketplace",
   "homepage": "https://code-colab.renode.space"
 }

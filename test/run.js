@@ -37,7 +37,7 @@ const {
   isNewer,
   trustedTransport,
   removeLegacyInstall,
-  LEGACY_EXTENSION_ID,
+  LEGACY_EXTENSION_IDS,
 } = require("../src/updater");
 const { colorFor, initials } = require("../src/colors");
 const { normalizeCode } = require("../src/code");
@@ -158,7 +158,7 @@ async function unitTests() {
   check("code: from url", normalizeCode("https://x.io/j/abc-defg-hij") === "abc-defg-hij");
   check(
     "code: from deep link",
-    normalizeCode("vscode://codecolab.codecolab/join?code=abc-defg-hij&server=http://x") ===
+    normalizeCode("vscode://ddatunashvili.codecolab/join?code=abc-defg-hij&server=http://x") ===
       "abc-defg-hij"
   );
   check("code: rejects junk", normalizeCode("hello") === "");
@@ -179,40 +179,53 @@ async function unitTests() {
     !trustedTransport("http://example.com/a")
   );
 
-  // The publisher rename leaves the old extension installed beside the new
-  // one; the new one is what clears it away.
+  // Each publisher rename leaves an older copy installed beside the new one;
+  // the current build is what clears them away.
   const uninstalled = () =>
     state.executed.filter((c) => c[0] === "workbench.extensions.uninstallExtension");
+  const installLegacy = () => {
+    state.executed.length = 0;
+    state.extensions.clear();
+    for (const id of LEGACY_EXTENSION_IDS) state.extensions.set(id, { id });
+  };
 
-  state.executed.length = 0;
-  state.extensions.clear();
-  state.extensions.set(LEGACY_EXTENSION_ID, { id: LEGACY_EXTENSION_ID });
-  const removedOld = await removeLegacyInstall({ extension: { id: "codecolab.codecolab" } });
+  installLegacy();
+  const removedOld = await removeLegacyInstall({
+    extension: { id: "ddatunashvili.codecolab" },
+  });
   check(
-    "legacy: the new build removes the old id",
-    removedOld === true && uninstalled().some((c) => c[1] === LEGACY_EXTENSION_ID)
+    "legacy: the current build removes every older id",
+    removedOld.length === LEGACY_EXTENSION_IDS.length &&
+      LEGACY_EXTENSION_IDS.every((id) => uninstalled().some((c) => c[1] === id))
   );
-  check("legacy: and it is gone afterwards", !state.extensions.has(LEGACY_EXTENSION_ID));
-
-  // Asking for its own removal would tear the caller down mid-update.
-  state.executed.length = 0;
-  state.extensions.clear();
-  state.extensions.set(LEGACY_EXTENSION_ID, { id: LEGACY_EXTENSION_ID });
-  const removedSelf = await removeLegacyInstall({ extension: { id: LEGACY_EXTENSION_ID } });
   check(
-    "legacy: the old build never uninstalls itself",
-    removedSelf === false && uninstalled().length === 0
+    "legacy: and they are gone afterwards",
+    LEGACY_EXTENSION_IDS.every((id) => !state.extensions.has(id))
+  );
+
+  // Asking for its own removal would tear the caller down mid-update, so a
+  // build that is itself on the list skips only itself.
+  installLegacy();
+  const self = LEGACY_EXTENSION_IDS[1];
+  const removedSelf = await removeLegacyInstall({ extension: { id: self } });
+  check(
+    "legacy: a build on the list never uninstalls itself",
+    !removedSelf.includes(self) && state.extensions.has(self)
+  );
+  check(
+    "legacy: but it still clears the ones before it",
+    removedSelf.includes(LEGACY_EXTENSION_IDS[0])
   );
 
   // The common case, on every activation from here on.
   state.executed.length = 0;
   state.extensions.clear();
   const removedNothing = await removeLegacyInstall({
-    extension: { id: "codecolab.codecolab" },
+    extension: { id: "ddatunashvili.codecolab" },
   });
   check(
-    "legacy: nothing to do when the old id is absent",
-    removedNothing === false && uninstalled().length === 0
+    "legacy: nothing to do when no old id is installed",
+    removedNothing.length === 0 && uninstalled().length === 0
   );
 
   check("colour: stable for an id", colorFor(7).hex === colorFor(7).hex);
