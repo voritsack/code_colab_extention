@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.0
+
+First Marketplace release, published as `codecolab.codecolab`.
+
+The version restarts at 1.0.0 here. Everything below was sideloaded from the
+CodeColab server before the extension had a Marketplace listing, and those
+2.x numbers describe the same code continuing - not a later release than this
+one. An installed 2.6.x build will not see 1.0.0 as an update; reinstall from
+the Marketplace to move across.
+
+## Before the Marketplace listing
+
 ## 2.6.6
 
 - **`.env.example` is no longer packaged.** `.vscodeignore` both re-included
